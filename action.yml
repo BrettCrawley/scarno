@@ -1,4 +1,4 @@
-name: Scarno
+name: Scarno Dependency Pruner
 description: >-
   Smart dependency pruner — identifies unused, undeclared, and
   suspicious-install dependencies across Python, Java/Kotlin, and
