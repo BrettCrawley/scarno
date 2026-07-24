@@ -1,10 +1,5 @@
 name: Scarno Dependency Pruner
-description: >-
-  Smart dependency pruner — identifies unused, undeclared, and
-  suspicious-install dependencies across Python, Java/Kotlin, and
-  (once REQ-10+ lands) JS/TS/CSS, Go, C#. Uploads SARIF to Code
-  Scanning, posts a sticky PR-comment checklist, and annotates each
-  finding inline in the "Files changed" view.
+description: Find unused, undeclared, and conflicting dependencies across Python, Java, JS/TS, Go, C#, and CSS. SARIF + PR comments.
 author: Brett Crawley
 branding:
   icon: scissors
