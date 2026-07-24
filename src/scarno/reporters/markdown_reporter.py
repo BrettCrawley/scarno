@@ -48,8 +48,10 @@ from scarno.models import (
     AnalysisResult,
     Dependency,
     DependencyStatus,
+    DepEdge,
     Finding,
     FindingSeverity,
+    VersionedNode,
 )
 from scarno.reporters._remote_banner import compute_state, text_banner
 from scarno.security import sanitise, sanitise_declared_version
@@ -462,6 +464,16 @@ def _render_ascii_tree(
             label += "  ← resolved"
         return label
 
+    def nodes_emitted_capped() -> bool:
+        if nodes_emitted >= _TREE_NODE_CAP:
+            truncated[0] = True
+            return True
+        return False
+
+    def bump_node() -> None:
+        nonlocal nodes_emitted
+        nodes_emitted += 1
+
     def _render_subtree(
         dep: Dependency,
         prefix: str,
@@ -523,16 +535,6 @@ def _render_ascii_tree(
                     child_dep, new_prefix, i == len(children) - 1,
                     new_visited, depth + 1,
                 )
-
-    def nodes_emitted_capped() -> bool:
-        if nodes_emitted >= _TREE_NODE_CAP:
-            truncated[0] = True
-            return True
-        return False
-
-    def bump_node() -> None:
-        nonlocal nodes_emitted
-        nodes_emitted += 1
 
     # REQ-19 — direct deps render with the version declared in the
     # project's own manifest (the synthetic root edges, parent ""),
@@ -709,7 +711,7 @@ def _render_multi_version_section(result: "AnalysisResult") -> list[str]:
         for d in result.dependencies
         if d.version
     }
-    nodes_by_coord: dict[str, list] = {}
+    nodes_by_coord: dict[str, list[VersionedNode]] = {}
     for n in result.versioned_nodes:
         nodes_by_coord.setdefault(n.canonical, []).append(n)
     for coord in sorted(result.multi_version_coords):

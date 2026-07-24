@@ -166,7 +166,7 @@ PRIVACY_REQUIREMENTS: frozenset[str] = frozenset(
         # REQ-17 — aggregate-only test-skip reporting (no per-file leak)
         "PRV-004",
         # REQ-24 — Remote Index Fetch
-        "PRV-005",  # Off-machine disclosure minimised to multi-version-conflict coords
+        "PRV-005",  # Off-machine disclosure: minimisation gate superseded by mandatory pre-fetch disclosure + LIMITATIONS.md (REQ-24 Option 2)
         "PRV-006",  # Disclosure line names IP exposure explicitly
         "PRV-007",  # Operator-facing docs explain project-fingerprinting risk (PT-005)
     }
@@ -390,9 +390,8 @@ FUNCTIONAL_REQUIREMENTS: frozenset[str] = frozenset(
         "FR-267",  # provenance="remote" not escalated by --fail-on-severity by default; --fail-on-remote-severity opt-in
         # REQ-3 — Python entry-point enumeration (PEP 562 lazy loading)
         "FR-271",  # Module-level __getattr__ (PEP 562): surface used lazy symbols; diagnose unenumerable unused surface
-        # COMP-005..006 — REQ-24 compliance touchpoints
+        # COMP-005 — REQ-24 GDPR compliance touchpoint (consent gate + disclosure)
         "COMP-005",  # GDPR — operator IP disclosure to index hosts; consent via --allow-remote-fetch + PUC-006/008
-        "COMP-006",  # EU CRA — out of scope for scarno as open-source v1; flagged for downstream commercial packagers
     }
 )
 
@@ -468,6 +467,7 @@ STATIC_ANALYSIS_COVERED: frozenset[str] = frozenset(
         "SEC-006",  # CI pipeline composition — verified via workflow review
         "SEC-007",  # THREAT_MODEL.md existence — via test_docs.py (Phase 0b)
         "COMP-001",  # THREAT_MODEL.md contents — via test_docs.py (Phase 0b)
+        "COMP-006",  # EU CRA — out of scope for open-source v1; documented policy carve-out (docs/scarno-security-privacy-analysis.md), not a behavioural requirement
     }
 )
 

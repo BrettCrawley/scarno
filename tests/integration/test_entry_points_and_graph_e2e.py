@@ -85,7 +85,7 @@ version = "4.0.0"
 
         result = CliRunner().invoke(app, [str(tmp_path), "--format", "json"])
         assert result.exit_code in (0, 1, 3), result.output
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         graph = data.get("dep_graph") or {}
         assert graph, "dep_graph was empty in JSON output"
         # Direct edge: alpha → {beta, gamma}.
@@ -187,7 +187,7 @@ version = "2"
         result = CliRunner().invoke(app, [
             str(tmp_path), "--format", "json", "--show-suppressed",
         ])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert data.get("dep_graph", {}).get("alpha"), (
             "dep_graph dropped when --show-suppressed rebuilds the result"
         )
@@ -222,7 +222,7 @@ version = "2"
         result = CliRunner().invoke(app, [
             str(tmp_path), "--format", "json", "--language", "pypi",
         ])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert data.get("dep_graph", {}).get("alpha"), (
             "dep_graph dropped when --language filter rebuilds the result"
         )
@@ -247,7 +247,7 @@ class TestUsageCountAcrossEcosystems:
            "pytest.fail('b')\n"
            "pytest.skip('s')\n")
         result = CliRunner().invoke(app, [str(tmp_path), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         pytest_dep = next(
             (d for d in data["dependencies"] if d["name"] == "pytest"), None
         )
@@ -296,7 +296,7 @@ public class App {
 }
 """)
         result = CliRunner().invoke(app, [str(tmp_path), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         guava = next(
             (d for d in data["dependencies"]
              if d["name"] == "com.google.guava:guava"),
@@ -338,7 +338,7 @@ public class App {
            'import last from "lodash/debounce";\n')
 
         result = CliRunner().invoke(app, [str(tmp_path), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         lodash = next(
             (d for d in data["dependencies"] if d["name"] == "lodash"), None
         )
@@ -375,7 +375,7 @@ class P {
 }
 """)
         result = CliRunner().invoke(app, [str(tmp_path), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         serilog = next(
             (d for d in data["dependencies"] if d["name"] == "Serilog"), None
         )
@@ -458,7 +458,7 @@ class P {
 </project>
 """)
         result = CliRunner().invoke(app, [str(project), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         graph = data.get("dep_graph") or {}
         # The runtime transitives must appear; the test-scoped one must NOT.
         assert "com.google.guava:guava" in graph, (
@@ -524,7 +524,7 @@ class P {
 """)
 
         result = CliRunner().invoke(app, [str(tmp_path), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         names = {d["name"] for d in data["dependencies"]}
         # Parent-POM dep MUST appear.
         assert "org.slf4j:slf4j-api" in names, (
@@ -552,7 +552,7 @@ func main() {
 }
 """)
         result = CliRunner().invoke(app, [str(tmp_path), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         # Go canonicalises to module path.
         errors_dep = next(
             (d for d in data["dependencies"]

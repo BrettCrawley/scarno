@@ -142,7 +142,7 @@ class TestFormatFlag:
         )
         result = runner.invoke(app, [str(tmp_path), "--format", "sarif"])
         assert result.exit_code in (0, 1)
-        data = _json.loads(result.output)
+        data = _json.loads(result.stdout)
         assert data["version"] == "2.1.0"
         assert data["runs"][0]["tool"]["driver"]["name"] == "scarno"
 
@@ -197,7 +197,7 @@ class TestVerboseFlag:
             app, [str(tmp_path), "--verbose", "--format", "json"]
         )
         try:
-            json.loads(result.output)
+            json.loads(result.stdout)
         except json.JSONDecodeError:
             pytest.fail("--verbose corrupted JSON stdout output")
 

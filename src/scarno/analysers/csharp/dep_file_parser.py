@@ -178,7 +178,11 @@ def _read_xml(path: Path, result: _CsharpParseResult) -> ET.Element | None:
         return None
 
     try:
-        return ET.fromstring(raw)
+        # B314 — DOCTYPE already rejected above (SEC-NEW-25); with no DTD
+        # present the residual xml.etree attack surface (external entities,
+        # billion-laughs) is unreachable. defusedxml would add a transitive
+        # dependency without strengthening the guarantee.
+        return ET.fromstring(raw)  # nosec B314
     except ET.ParseError as exc:
         result.errors.append(f"{path.name}: XML parse error — {exc}")
         return None

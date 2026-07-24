@@ -38,11 +38,16 @@ import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from scarno.core.base_analyser import BaseAnalyser
 from scarno.models import AnalysisResult, Dependency, DependencyStatus
 from scarno.security import MAX_FILE_BYTES, PathEscapeError, resolve_and_confine
+
+if TYPE_CHECKING:
+    from subprocess import CompletedProcess
+
+    from scarno.models import DepEdge
 
 _MAX_LINE_BYTES = 64 * 1024
 _MAX_MODULE_DEPTH = 20
@@ -656,7 +661,7 @@ _GRADLE_TREE_LINE_RE = re.compile(
 
 def _emit_dep_edges_from_output(
     output: str, *, parent: str = ""
-) -> list["DepEdge"]:  # noqa: F821 — forward reference
+) -> list[DepEdge]:
     """Parse a `gradle dependencies` text block into REQ-19 ``DepEdge``s.
 
     Each line of the form ``+--- group:artifact:requested[ -> resolved]``
@@ -792,7 +797,7 @@ _GRADLE_ALLOWED_CONFIGURATIONS: frozenset[str] = frozenset(
 
 def _invoke_gradle_safe(
     argv_tail: list[str], *, timeout_s: float = 60.0
-):
+) -> CompletedProcess[str] | None:
     """REQ-19a / SEC-NEW-55 — argv-allowlist-checked gradle invocation.
 
     Every token in ``argv_tail`` MUST be on the fixed allowlist. The

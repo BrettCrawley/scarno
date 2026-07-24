@@ -33,6 +33,7 @@ _REQ24_FLAG_FIELDS: tuple[str, ...] = (
 @pytest.mark.requirement("FR-260")
 @pytest.mark.requirement("FR-261")
 @pytest.mark.requirement("FR-267")
+@pytest.mark.requirement("COMP-005")
 def test_req24_flags_set_only_by_argv():
     """Static-AST parse of ``cli.py``: each REQ-24 flag may be
     assigned ONLY in code paths originating from the argv parser.

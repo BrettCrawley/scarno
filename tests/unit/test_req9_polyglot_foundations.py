@@ -100,7 +100,7 @@ class TestOrchestratorRunsAllAnalysers:
             pytest.skip("Go analyser not yet registered — Phase 6 pending")
         import json
 
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert "languages" in data, (
             "AnalysisResult.languages must surface in JSON output (FR-099)"
         )
@@ -126,7 +126,7 @@ class TestLanguageFilter:
             pytest.skip("--language flag not yet implemented — REQ-9 pending")
         import json
 
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         # REQ-9 contract — every surviving dep must carry the requested
         # ecosystem. ``languages`` holds language keys (``"python"``);
         # the ecosystem tag lives on each Dependency.

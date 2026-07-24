@@ -53,7 +53,7 @@ import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from scarno.core.base_analyser import BaseAnalyser
 from scarno.models import (
@@ -718,15 +718,15 @@ class MavenPomResolver(BaseAnalyser):
             _seed_project_properties(local_props, pom)
 
             children: set[str] = set()
-            for dep in pom.dependencies:
+            for dep_map in pom.dependencies:
                 # Skip test- and provided-scoped transitives — runtime
                 # closure is what determines "footprint freed if removed".
-                scope = (dep.get("scope") or "").lower()
+                scope = (dep_map.get("scope") or "").lower()
                 if scope in {"test", "provided", "system"}:
                     continue
-                raw_g = dep.get("groupId")
-                raw_a = dep.get("artifactId")
-                raw_v = dep.get("version")
+                raw_g = dep_map.get("groupId")
+                raw_a = dep_map.get("artifactId")
+                raw_v = dep_map.get("version")
                 if not raw_g or not raw_a:
                     continue
                 child_g, g_ok = _resolve_placeholders(raw_g, local_props)
@@ -1143,7 +1143,9 @@ def _warn_path_fallback_once(binary_name: str) -> None:
     )
 
 
-def _invoke_mvn_safe(argv_tail: list[str], *, timeout_s: float = _MVN_TIMEOUT_SEC):
+def _invoke_mvn_safe(
+    argv_tail: list[str], *, timeout_s: float = _MVN_TIMEOUT_SEC
+) -> "subprocess.CompletedProcess[str] | None":
     """REQ-19a / SEC-NEW-55 — argv-allowlist-checked mvn invocation.
 
     ``argv_tail`` MUST be supplied by Scarno code. Each token is
@@ -1347,10 +1349,23 @@ def _augment_pom_with_exclusions(pom_path: Path, pom: "_PomData") -> None:
     isn't enabled (it always is, but the augmentation is cheap).
     """
     try:
-        tree = ET.parse(str(pom_path))
-    except (ET.ParseError, OSError):
+        raw = pom_path.read_bytes()
+    except OSError:
         return
-    root = tree.getroot()
+    # XXE / billion-laughs defence (SEC-NEW-01) — mirror the main parser and
+    # refuse any POM declaring a DOCTYPE before it reaches the stdlib parser.
+    # Without this guard, augmentation re-parses the file with no protection.
+    # (bytes pattern: raw is undecoded so ET.fromstring can honour any XML
+    # encoding declaration, which a str would reject.)
+    if re.search(rb"<!DOCTYPE\b", raw[:4096], re.IGNORECASE):
+        return
+    try:
+        # B314 — DOCTYPE rejected above; with no DTD reachable the residual
+        # xml.etree attack surface (external entities, entity-expansion) is
+        # not exploitable. defusedxml would add a dep without adding safety.
+        root = ET.fromstring(raw)  # nosec B314
+    except ET.ParseError:
+        return
     deps_elem = _find(root, "dependencies")
     if deps_elem is None:
         return
@@ -1367,7 +1382,12 @@ def _augment_pom_with_exclusions(pom_path: Path, pom: "_PomData") -> None:
                 }
             )
         if i < len(pom.dependencies):
-            pom.dependencies[i]["exclusions"] = excls
+            # The dependency dicts are declared ``dict[str, str | None]`` for
+            # their coordinate fields, but this augmentation attaches a list of
+            # exclusion maps under a reserved key. Cast to a permissive mapping
+            # so the heterogeneous write is type-valid without widening the
+            # value type everywhere else the coordinate fields are read.
+            cast(dict[str, object], pom.dependencies[i])["exclusions"] = excls
 
 
 # Re-entry point used by _collect_exclusions_from_walked_poms.
@@ -1376,7 +1396,7 @@ _orig_parse_pom_file = _parse_pom_file
 
 def _parse_pom_file_with_exclusions(  # noqa: F811 — re-export with augmentation
     path: Path, errors: list[str]
-):
+) -> "_PomData | None":
     pom = _orig_parse_pom_file(path, errors)
     if pom is not None:
         _augment_pom_with_exclusions(path, pom)
@@ -1385,7 +1405,7 @@ def _parse_pom_file_with_exclusions(  # noqa: F811 — re-export with augmentati
 
 # Replace the symbol so _collect_exclusions_from_walked_poms uses the
 # augmented variant.
-_parse_pom_file = _parse_pom_file_with_exclusions  # type: ignore[assignment]
+_parse_pom_file = _parse_pom_file_with_exclusions
 
 
 def _collect_dependency_management(

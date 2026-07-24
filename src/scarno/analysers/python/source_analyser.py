@@ -1010,8 +1010,8 @@ def analyse_source_files_with_findings(
         for key, count in visitor.usage_counts.items():
             usage_counts_all[key] = usage_counts_all.get(key, 0) + count
         wildcard_modules_all |= visitor.wildcard_modules
-        for key, count in visitor.method_calls.items():
-            method_calls_all[key] = method_calls_all.get(key, 0) + count
+        for mkey, count in visitor.method_calls.items():
+            method_calls_all[mkey] = method_calls_all.get(mkey, 0) + count
         for name, count in visitor.unqualified_name_refs.items():
             unqualified_refs_all[name] = (
                 unqualified_refs_all.get(name, 0) + count
@@ -1036,8 +1036,8 @@ def analyse_source_files_with_findings(
         for key, count in nb_visitor.usage_counts.items():
             usage_counts_all[key] = usage_counts_all.get(key, 0) + count
         wildcard_modules_all |= nb_visitor.wildcard_modules
-        for key, count in nb_visitor.method_calls.items():
-            method_calls_all[key] = method_calls_all.get(key, 0) + count
+        for mkey, count in nb_visitor.method_calls.items():
+            method_calls_all[mkey] = method_calls_all.get(mkey, 0) + count
         for name, count in nb_visitor.unqualified_name_refs.items():
             unqualified_refs_all[name] = (
                 unqualified_refs_all.get(name, 0) + count

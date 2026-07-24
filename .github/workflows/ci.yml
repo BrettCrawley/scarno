@@ -60,9 +60,11 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Collect SRTM coverage and fail on gaps
+        # Full run (not --collect-only) so the coverage gate measures real
+        # execution instead of aborting at ~16%; the SRTM plugin harvests
+        # requirement markers during the same run and fails on any gap.
         run: |
           uv run pytest tests/ \
-            --collect-only \
             -q \
             --srtm-report=srtm-coverage.json \
             --srtm-fail-on-gap
@@ -124,7 +126,12 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Run pip-audit
-        run: uv run pip-audit --strict
+        # Audit the installed environment for known CVEs. --skip-editable
+        # excludes the local scarno project (not on PyPI, so unauditable).
+        # --strict is intentionally omitted: it fails on ANY skipped dist,
+        # which would include the editable project — incompatible with
+        # --skip-editable. A real vulnerability still fails the job.
+        run: uv run pip-audit --skip-editable
 
   opengrep:
     name: opengrep SAST

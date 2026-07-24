@@ -26,7 +26,7 @@ class TestB1CLIBoundary:
     def test_resolved_path_used_not_raw_string(self, runner, tmp_path):
         (tmp_path / "pyproject.toml").write_text('[project]\ndependencies = []\n')
         result = runner.invoke(app, [str(tmp_path), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         project_path = data.get("project_path", "")
         assert os.path.isabs(project_path)
         assert ".." not in project_path
@@ -46,7 +46,7 @@ class TestB2FilesystemBoundary:
             (project / "sneaky.py").symlink_to("/etc/passwd")
         result = runner.invoke(app, [str(project), "--format", "json"])
         assert result.exit_code in (0, 1)
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         output_text = json.dumps(data)
         assert "root:" not in output_text
         assert "/bin/" not in output_text
@@ -64,7 +64,7 @@ class TestB5OutputBoundary:
         )
         result = runner.invoke(app, [str(project), "--format", "json"])
         assert result.exit_code in (0, 1)
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert "dependencies" in data
 
     @pytest.mark.requirement("R-01")
@@ -73,7 +73,7 @@ class TestB5OutputBoundary:
     def test_json_output_includes_version_and_timestamp(self, runner, tmp_path):
         (tmp_path / "pyproject.toml").write_text('[project]\ndependencies = []\n')
         result = runner.invoke(app, [str(tmp_path), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert "scarno_version" in data
         assert "analysis_timestamp" in data
 
@@ -92,6 +92,6 @@ class TestB5OutputBoundary:
             'API_KEY = "super_secret_key_12345"\nimport requests\n'
         )
         result = runner.invoke(app, [str(project), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         output_text = json.dumps(data)
         assert "super_secret_key_12345" not in output_text

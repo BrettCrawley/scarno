@@ -364,6 +364,7 @@ class TestDecompressionBombGuards:
 class TestDisclosureMessage:
     @pytest.mark.requirement("PRV-006")
     @pytest.mark.requirement("FR-263")
+    @pytest.mark.requirement("PRV-005")
     def test_pre_fetch_disclosure_names_hosts_and_ip_exposure(self, tmp_path):
         artefact = b"PK\x03\x04"
         url = (

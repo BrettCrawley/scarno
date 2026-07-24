@@ -139,6 +139,45 @@ class TestXXEPrevention:
         assert "root:" not in all_text
         assert "sentinel_content_12345" not in all_text
 
+    @pytest.mark.requirement("SEC-NEW-01")
+    @pytest.mark.security
+    def test_exclusions_augmentation_rejects_doctype(self, tmp_path):
+        """Defence-in-depth: the ``<exclusions>`` re-parse path
+        (``_augment_pom_with_exclusions``) must refuse a DOCTYPE-bearing
+        POM before it reaches the stdlib XML parser. This path re-reads
+        the file independently of the main parser, so without its own
+        DOCTYPE guard it would be an unguarded XXE sink."""
+        clean = tmp_path / "clean-pom.xml"
+        clean.write_text(
+            "<project><modelVersion>4.0.0</modelVersion>"
+            "<groupId>g</groupId><artifactId>a</artifactId><version>1</version>"
+            "<dependencies><dependency><groupId>x</groupId>"
+            "<artifactId>y</artifactId><version>1</version></dependency>"
+            "</dependencies></project>"
+        )
+        pom = maven_mod._parse_pom_file(clean, [])
+        assert pom is not None
+
+        sentinel = tmp_path / "sentinel.txt"
+        sentinel.write_text("sentinel_content_54321")
+        malicious = tmp_path / "evil-pom.xml"
+        malicious.write_text(
+            '<?xml version="1.0"?>\n'
+            "<!DOCTYPE project [\n"
+            f'  <!ENTITY xxe SYSTEM "file://{sentinel}">\n'
+            "]>\n"
+            "<project><dependencies><dependency>"
+            "<groupId>&xxe;</groupId><artifactId>y</artifactId>"
+            "<exclusions><exclusion><groupId>e</groupId>"
+            "<artifactId>ex</artifactId></exclusion></exclusions>"
+            "</dependency></dependencies></project>"
+        )
+        # Returns without raising and without reading the sentinel file.
+        maven_mod._augment_pom_with_exclusions(malicious, pom)
+        blob = repr(pom.dependencies)
+        assert "sentinel_content_54321" not in blob
+        assert "root:" not in blob
+
     @pytest.mark.requirement("SEC-010")
     @pytest.mark.requirement("SEC-NEW-01")
     @pytest.mark.requirement("D-02")

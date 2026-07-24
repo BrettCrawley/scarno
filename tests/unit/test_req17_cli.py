@@ -51,7 +51,7 @@ class TestExcludeTestsPython:
             str(tmp_path), "--format", "json", "--exclude-tests",
         ])
         assert result.exit_code in (0, 1)
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         names = _names(data["dependencies"])
         assert "pytest" not in names
         assert "requests" in names
@@ -70,7 +70,7 @@ class TestExcludeTestsPython:
         _write(tmp_path / "main.py", "import requests\n")
         result = runner.invoke(app, [str(tmp_path), "--format", "json"])
         assert result.exit_code in (0, 1)
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         names = _names(data["dependencies"])
         assert "pytest" in names
 
@@ -89,7 +89,7 @@ class TestExcludeTestsPython:
             str(tmp_path), "--format", "json", "--exclude-tests",
         ])
         assert result.exit_code in (0, 1)
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         names = _names(data["dependencies"])
         assert "pytest" not in names
 
@@ -106,7 +106,7 @@ class TestExcludeTestsPython:
             str(tmp_path), "--format", "json", "--exclude-tests",
         ])
         assert result.exit_code in (0, 1, 3)
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         # 'requests' would otherwise be flagged UNDECLARED — under
         # --exclude-tests it must not appear at all.
         names = _names(data["dependencies"])
@@ -141,7 +141,7 @@ class TestExcludeTestsMaven:
         result = runner.invoke(app, [
             str(tmp_path), "--format", "json", "--exclude-tests",
         ])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         names = _names(data["dependencies"])
         assert "junit:junit" not in names
         assert "org.example:lib" in names
@@ -165,7 +165,7 @@ dependencies {
         result = runner.invoke(app, [
             str(tmp_path), "--format", "json", "--exclude-tests",
         ])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         names = _names(data["dependencies"])
         assert "org.mockito:mockito-core" not in names
         assert "androidx.test:runner" not in names
@@ -191,7 +191,7 @@ class TestExcludeJs:
         result = runner.invoke(app, [
             str(tmp_path), "--format", "json", "--exclude-tests",
         ])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         names = _names(data["dependencies"])
         # devDependencies remain because --exclude-dev was not passed.
         assert "vitest" in names
@@ -209,7 +209,7 @@ class TestExcludeJs:
         result = runner.invoke(app, [
             str(tmp_path), "--format", "json", "--exclude-dev",
         ])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         names = _names(data["dependencies"])
         assert "vitest" not in names
         assert "eslint" not in names
@@ -225,7 +225,7 @@ class TestExcludeJs:
         }))
         _write(tmp_path / "src" / "index.ts", 'import "lodash";\n')
         result = runner.invoke(app, [str(tmp_path), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         names = _names(data["dependencies"])
         assert "vitest" in names
 
@@ -242,7 +242,7 @@ class TestExcludeJs:
             str(tmp_path), "--format", "json", "--exclude-dev",
         ])
         assert result.exit_code in (0, 1)
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         # A non-fatal warning is emitted in the errors list.
         assert any("--exclude-dev" in e for e in data["errors"])
 
@@ -265,7 +265,7 @@ class TestTestPathsFlag:
             str(tmp_path), "--format", "json",
             "--exclude-tests", "--test-paths", "it/**/*",
         ])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         names = _names(data["dependencies"])
         assert "requests" not in names
 
@@ -283,7 +283,7 @@ class TestTestPathsFlag:
         result = runner.invoke(app, [
             str(tmp_path), "--format", "json", "--test-paths", "it/**/*",
         ])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         names = _names(data["dependencies"])
         # Without --exclude-tests, 'requests' surfaces as UNDECLARED.
         assert "requests" in names
@@ -328,7 +328,7 @@ class TestAggregateOnlySkipReporting:
         result = runner.invoke(app, [
             str(tmp_path), "--format", "json", "--exclude-tests",
         ])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         # Errors must contain a single summary line; per-file paths must
         # not leak.
         skip_lines = [e for e in data["errors"] if "skipped" in e]
@@ -355,6 +355,6 @@ class TestAggregateOnlySkipReporting:
         result = runner.invoke(app, [
             str(tmp_path), "--format", "json", "--exclude-tests",
         ])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         joined = " | ".join(data["errors"])
         assert "secret" not in joined

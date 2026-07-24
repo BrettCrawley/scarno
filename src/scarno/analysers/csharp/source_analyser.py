@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
 
 from scarno.models import Dependency, DependencyStatus, EntryPoint
 from scarno.security import MAX_FILE_BYTES, PathEscapeError, resolve_and_confine
@@ -274,7 +275,7 @@ def _node_text_str(node) -> str:  # type: ignore[no-untyped-def]
         return ""
     if isinstance(text, bytes):
         return text.decode("utf-8", errors="replace")
-    return text
+    return cast(str, text)
 
 
 def _peel_generic(name: str) -> str:
@@ -356,7 +357,7 @@ def _record_local_declaration(node, facts: _Facts) -> None:  # type: ignore[no-u
         )
     type_name: str | None = None
     is_var = False
-    declarators: list = []
+    declarators: list[Any] = []
     for child in decl.children:
         ct = child.type
         if ct == "implicit_type":
@@ -376,7 +377,7 @@ def _record_local_declaration(node, facts: _Facts) -> None:  # type: ignore[no-u
         var_name = ""
         rhs_class: str | None = None
 
-        def _capture_class_from_creation(creation_node) -> str | None:
+        def _capture_class_from_creation(creation_node: Any) -> str | None:
             for vc in creation_node.children:
                 if vc.type in {"identifier", "qualified_name", "generic_name"}:
                     return _last_simple(

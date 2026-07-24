@@ -34,9 +34,13 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from scarno.models import Dependency, DependencyStatus, EntryPoint
 from scarno.security import MAX_FILE_BYTES, PathEscapeError, resolve_and_confine
+
+if TYPE_CHECKING:
+    from scarno.core.test_scope import TestScopeMatcher
 
 # Try to load tree-sitter grammars; graceful fallback on import failure.
 try:  # pragma: no cover — host-specific import path
@@ -639,9 +643,9 @@ def _record_member_expression(node, facts: _Facts) -> None:  # type: ignore[no-u
     # ``const c: Redis = …`` / ``function f(c: Redis)``.
     cls = facts.variable_class.get(receiver)
     if cls is not None:
-        pkg = facts.name_to_package.get(cls)
-        if pkg is not None:
-            key_m = (pkg, cls, prop)
+        pkg_cls = facts.name_to_package.get(cls)
+        if pkg_cls is not None:
+            key_m = (pkg_cls, cls, prop)
             facts.method_call_counts[key_m] = (
                 facts.method_call_counts.get(key_m, 0) + 1
             )
@@ -730,7 +734,7 @@ def _extract_type_annotation_simple(node) -> str | None:  # type: ignore[no-unty
     back to the last identifier when the type has multiple segments.
     """
     # Walk to find a type_identifier or generic_type or type_reference.
-    candidates: list = []
+    candidates: list[str] = []
     stack = list(node.children)
     while stack:
         n = stack.pop()

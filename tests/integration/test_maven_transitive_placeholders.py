@@ -95,7 +95,7 @@ class TestMavenTransitivePlaceholderResolution:
         project = tmp_path / "project"
         _project_pom(project)
         result = CliRunner().invoke(app, [str(project), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
 
         graph = data.get("dep_graph") or {}
         assert "com.example.lib:lib-core" in graph, (
@@ -128,7 +128,7 @@ class TestMavenTransitivePlaceholderResolution:
         project = tmp_path / "project"
         _project_pom(project)
         result = CliRunner().invoke(app, [str(project), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         graph = data.get("dep_graph") or {}
         assert "org.apache.commons:commons-lang3" in graph.get(
             "com.example.lib:lib-core", []
@@ -183,7 +183,7 @@ class TestMavenTransitivePlaceholderResolution:
 </project>
 """)
         result = CliRunner().invoke(app, [str(project), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         # No warnings should mention the literal ${revision} text.
         offending = [e for e in data["errors"] if "${revision}" in e]
         assert not offending, (

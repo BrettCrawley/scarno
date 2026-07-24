@@ -331,7 +331,7 @@ class TestExcludeTestsDoesNotMaskNonTestFindings:
         assert result.exit_code in (0, 1, 3)
         import json as _json
 
-        data = _json.loads(result.output)
+        data = _json.loads(result.stdout)
         # Production-source paths must remain in findings; test-source
         # paths must not. Both have the same pattern, so we can verify by
         # filename.

@@ -23,7 +23,7 @@ def _w(p: Path, text: str) -> None:
 def _run(tmp: Path) -> dict:
     result = CliRunner().invoke(app, [str(tmp), "--format", "json"])
     assert result.exit_code in (0, 1, 3), result.output
-    return json.loads(result.output)
+    return json.loads(result.stdout)
 
 
 def _dep(data: dict, name: str) -> dict:

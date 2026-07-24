@@ -60,6 +60,7 @@ from scarno.models import (
     FindingKind,
     FindingSeverity,
     JavaSignature,
+    VersionedNode,
 )
 from scarno.security import (
     PathEscapeError,
@@ -242,7 +243,7 @@ _SEVERITY_ORDER: dict[FindingSeverity, int] = {
 }
 
 
-def _finding_sort_key(f: Finding) -> tuple:
+def _finding_sort_key(f: Finding) -> tuple[int, str, str, str, int, str, str]:
     """Stable sort key — severity DESC, then identity-bearing fields ASC
     for byte-identical output across runs of the same fixture."""
     return (
@@ -394,7 +395,7 @@ class CrossVersionAbiDiffer:
         """
         # Build work items: one per (coord, declared_version) pair
         # whose declared_version differs from the resolved version.
-        nodes_by_coord: dict[str, list] = {}
+        nodes_by_coord: dict[str, list[VersionedNode]] = {}
         for n in (result.versioned_nodes or []):
             nodes_by_coord.setdefault(n.canonical, []).append(n)
 

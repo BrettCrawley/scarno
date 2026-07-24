@@ -179,7 +179,7 @@ class _NpmParseResult:
     edges: list["DepEdge"] = field(default_factory=list)  # noqa: F821 — forward ref
 
 
-class _NpmReturnValue(tuple):
+class _NpmReturnValue(tuple[list[Dependency], list[str], list["Finding"]]):
     """3-tuple return preserving back-compat unpacking with an attached
     ``.edges`` attribute carrying REQ-19 ``DepEdge`` records.
 
@@ -1235,7 +1235,7 @@ def _extract_overrides(
         return True
 
     def _walk_overrides(
-        node, *, mechanism: str, parent_chain: tuple[str, ...]
+        node: object, *, mechanism: str, parent_chain: tuple[str, ...]
     ) -> None:
         """Recursive walk into targeted-overrides nesting (npm-8+ syntax).
 

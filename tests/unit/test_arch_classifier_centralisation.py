@@ -17,6 +17,7 @@ import pytest
 
 
 @pytest.mark.requirement("SEC-NEW-46")
+@pytest.mark.requirement("FR-250")
 def test_every_analyser_routes_through_classifier():
     """TA-236a — Each registered analyser, when run against a tiny
     fixture, produces a result whose either ``versioned_nodes`` is

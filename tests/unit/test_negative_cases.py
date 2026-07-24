@@ -273,7 +273,7 @@ class TestCliEdges:
         )
         result = runner.invoke(app, [str(project), "--format", "json"])
         assert result.exit_code in (0, 1)
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert "project_path" in data
 
     @pytest.mark.requirement("NEG-005")
@@ -306,7 +306,7 @@ class TestCliEdges:
         result = runner.invoke(app, [str(tmp_path), "--format", "JSON"])
         assert result.exit_code in (0, 1)
         # Output should be parseable JSON
-        json.loads(result.output)
+        json.loads(result.stdout)
 
     @pytest.mark.requirement("NEG-005")
     def test_empty_directory_exits_2(self, runner, tmp_path):
@@ -467,7 +467,7 @@ class TestOrchestratorFailureModes:
         result = runner.invoke(app, [str(tmp_path), "--format", "json"])
         # Python analyser runs; Go is mentioned in either languages or errors.
         assert result.exit_code in (0, 1)
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert "go" in data.get("languages", []) or any(
             "go" in e.lower() for e in data.get("errors", [])
         )

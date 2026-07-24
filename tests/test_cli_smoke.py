@@ -36,28 +36,28 @@ class TestSmokeTests:
     def test_simple_python_json_format_valid(self, runner, simple_python):
         result = runner.invoke(app, [str(simple_python), "--format", "json"])
         assert result.exit_code in (0, 1)
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert "project_type" in data
         assert data["project_type"] == "python"
 
     @pytest.mark.requirement("FR-001")
     def test_simple_python_requests_in_output(self, runner, simple_python):
         result = runner.invoke(app, [str(simple_python), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         names = [d["name"] for d in data["dependencies"]]
         assert "requests" in names
 
     @pytest.mark.requirement("FR-001")
     def test_simple_python_boto3_in_output(self, runner, simple_python):
         result = runner.invoke(app, [str(simple_python), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         names = [d["name"] for d in data["dependencies"]]
         assert "boto3" in names
 
     @pytest.mark.requirement("FR-002")
     def test_exit_code_1_when_safe_deps_found(self, runner, simple_python):
         result = runner.invoke(app, [str(simple_python), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         has_safe = any(d["status"] == "SAFE" for d in data["dependencies"])
         if has_safe:
             assert result.exit_code == 1
@@ -87,12 +87,12 @@ class TestSmokeTests:
             [str(simple_python), "--format", "json", "--verbose"],
         )
         assert result.exit_code in (0, 1)
-        json.loads(result.output)
+        json.loads(result.stdout)
 
     @pytest.mark.requirement("FR-003")
     def test_analysis_result_has_required_schema_fields(self, runner, simple_python):
         result = runner.invoke(app, [str(simple_python), "--format", "json"])
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert "project_type" in data
         assert "project_path" in data
         assert "dependencies" in data

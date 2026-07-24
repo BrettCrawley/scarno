@@ -7,11 +7,18 @@ catch pathological regressions, not to enforce sub-millisecond timing.
 from __future__ import annotations
 
 import json
+import os
 import time
 
 import pytest
 
 pytestmark = pytest.mark.performance
+
+# Shared CI runners are slower and noisier than developer hardware. These
+# budgets exist to catch pathological (O(n²) / fork-storm) regressions, not
+# to enforce absolute timing, so allow generous headroom under CI
+# (GitHub Actions sets ``CI=true``).
+_CI_BUDGET_SCALE = 4.0 if os.environ.get("CI") == "true" else 1.0
 
 
 # ── TA-226 ──────────────────────────────────────────────────────────────────
@@ -63,7 +70,8 @@ def test_tree_render_1000_deps_5000_edges_under_absolute_budget():
     start = time.monotonic()
     MarkdownReporter().render(result)
     elapsed = time.monotonic() - start
-    assert elapsed < 1.0, f"tree render took {elapsed:.2f}s (budget 1.0s)"
+    budget = 1.0 * _CI_BUDGET_SCALE
+    assert elapsed < budget, f"tree render took {elapsed:.2f}s (budget {budget:.1f}s)"
 
 
 # ── TA-227 ──────────────────────────────────────────────────────────────────
@@ -118,8 +126,9 @@ def test_npm_lockfile_8MiB_parse_under_500ms(tmp_path):
     start = time.monotonic()
     result = parse_all_npm_dependency_files(str(project_root))
     elapsed = time.monotonic() - start
-    assert elapsed < 0.5, (
-        f"8 MiB lockfile parse took {elapsed:.2f}s (budget 0.5s)"
+    budget = 0.5 * _CI_BUDGET_SCALE
+    assert elapsed < budget, (
+        f"8 MiB lockfile parse took {elapsed:.2f}s (budget {budget:.1f}s)"
     )
     # REQ-19 contract: the parser must populate dep_edges within the same
     # budget. Without this assertion, the test passes on the pre-Phase-9
