@@ -141,9 +141,14 @@ jobs:
 
       - name: Install opengrep
         run: |
-          curl -L https://github.com/opengrep/opengrep/releases/latest/download/opengrep-linux-x64 \
+          # opengrep_manylinux_x86 is the standalone glibc x86_64 binary
+          # (the old opengrep-linux-x64 asset no longer exists). --fail so a
+          # bad URL errors here instead of writing an HTML/error page that
+          # then fails to execute with a confusing exit 127.
+          curl -fL https://github.com/opengrep/opengrep/releases/latest/download/opengrep_manylinux_x86 \
             -o /usr/local/bin/opengrep
           chmod +x /usr/local/bin/opengrep
+          opengrep --version
 
       - name: Run opengrep
-        run: opengrep scan --rules .opengrep/rules/ src/
+        run: opengrep scan --config .opengrep/rules/ src/
