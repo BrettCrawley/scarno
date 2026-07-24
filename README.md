@@ -1,4 +1,4 @@
-![Scarno - Cut the dead wood before it catches fire](https://raw.githubusercontent.com/BrettCrawley/scarno/v1.0.0/branding/scarno-logo.png)
+![Scarno - Cut the dead wood before it catches fire](https://raw.githubusercontent.com/BrettCrawley/scarno/v1.0.1/branding/scarno-logo.png)
 
 # Scarno
 
