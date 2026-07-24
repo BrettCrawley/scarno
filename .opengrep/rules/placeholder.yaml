@@ -1,0 +1,9 @@
+# Placeholder rule so `opengrep scan` has at least one rule to load.
+# Real rules land in Phase 0b (see .opengrep/rules/README.md).
+rules:
+  - id: ts-placeholder
+    message: "Placeholder rule — will be replaced in Phase 0b."
+    severity: INFO
+    languages: [python]
+    pattern: |
+      __SCARNO_PLACEHOLDER_NEVER_MATCHES__

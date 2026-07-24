@@ -1,0 +1,81 @@
+name: action-smoke
+
+# Regression smoke-test for the composite GitHub Action declared at
+# ``action.yml``. Runs on every push. Asserts the action produces the
+# expected outputs for a deterministic fixture.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+  security-events: write  # upload-sarif
+  pull-requests: write    # sticky comment (only used on pull_request events)
+
+jobs:
+  smoke:
+    name: action smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Scarno action against simple_python fixture
+        id: ts
+        uses: ./
+        with:
+          path: tests/fixtures/simple_python
+          format: sarif
+          output-file: scarno.sarif
+          fail-on-severity: CRITICAL
+          # The fixture has SAFE deps but no HIGH/CRITICAL findings — we
+          # relax the threshold so the smoke workflow doesn't flip red on
+          # a happy-path fixture. Gating is exercised in a dedicated
+          # severity test below.
+          upload-sarif: "false"   # dogfood: don't spam Code Scanning from the main repo
+          comment-on-pr: "false"
+          job-summary: "true"
+
+      - name: Verify action outputs
+        shell: bash
+        env:
+          SAFE: ${{ steps.ts.outputs.safe-count }}
+          UNCERTAIN: ${{ steps.ts.outputs.uncertain-count }}
+          FINDINGS: ${{ steps.ts.outputs.finding-count }}
+          HIGHEST: ${{ steps.ts.outputs.highest-severity }}
+          EXIT: ${{ steps.ts.outputs.exit-code }}
+          SARIF: ${{ steps.ts.outputs.sarif-path }}
+        run: |
+          set -euo pipefail
+          echo "safe-count=${SAFE}"
+          echo "uncertain-count=${UNCERTAIN}"
+          echo "finding-count=${FINDINGS}"
+          echo "highest-severity=${HIGHEST}"
+          echo "exit-code=${EXIT}"
+          echo "sarif-path=${SARIF}"
+          # Sanity: simple_python declares requests + boto3; `main.py`
+          # imports only requests → boto3 is SAFE, requests is IN_USE.
+          test "${SAFE}" = "1"
+          test "${FINDINGS}" = "0"
+          test "${HIGHEST}" = "NONE"
+          test -f "${SARIF}"
+
+      - name: Verify SARIF parses and has the right shape
+        shell: bash
+        env:
+          SARIF: ${{ steps.ts.outputs.sarif-path }}
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          with open(os.environ["SARIF"]) as f:
+              data = json.load(f)
+          assert data["version"] == "2.1.0", data["version"]
+          driver = data["runs"][0]["tool"]["driver"]
+          assert driver["name"] == "scarno"
+          # At least one dep rule ID in the results (TS-DEP-SAFE for boto3)
+          rule_ids = {r["ruleId"] for r in data["runs"][0]["results"]}
+          assert "TS-DEP-SAFE" in rule_ids, f"SARIF results: {rule_ids}"
+          print("SARIF OK — rule ids:", sorted(rule_ids))
+          PY

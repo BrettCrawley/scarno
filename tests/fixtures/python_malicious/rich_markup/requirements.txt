@@ -1,0 +1,2 @@
+requests[bold red]click me[/bold red]==2.31.0
+[link=https://evil.example.com]numpy[/link]==1.26.0

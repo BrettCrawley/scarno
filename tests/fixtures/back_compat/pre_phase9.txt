@@ -1,0 +1,12 @@
+Scarno Analysis — /Users/brett/Claude/ClaudeCode/scarno/tests/fixtures/simple_python
+Project type: python
+
+SAFE TO REMOVE (1)
+  - boto3==1.26.0
+    Reason: no import or usage found in source files
+
+IN USE (1)
+  - requests==2.31.0
+    Reason: imported as 'requests' in project source
+  Entry points: 1 / 48 used
+  ✓ requests.get  (function)  used 1×

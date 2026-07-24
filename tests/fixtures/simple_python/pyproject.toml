@@ -1,0 +1,7 @@
+[project]
+name = "simple_python"
+version = "0.1.0"
+dependencies = [
+    "requests==2.31.0",
+    "boto3==1.26.0",
+]

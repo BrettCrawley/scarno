@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Virtual environments
+.venv/
+venv/
+
+# uv
+uv.lock
+
+# Build outputs
+dist/
+build/
+
+# SRTM coverage reports
+srtm-coverage.json
+
+# Scarno's own auto-named analysis report when the tool is run with
+# CWD at the repo root (during development / smoke tests).
+analysis-report.md
+*-analysis-report.md
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# System files
+.DS_Store

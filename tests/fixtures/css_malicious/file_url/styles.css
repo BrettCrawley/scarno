@@ -1,0 +1,9 @@
+/* file:// url() patterns — must trigger TS-CE-008 */
+.logo {
+  background: url("file:///etc/hostname");
+  content: url('file:///etc/passwd');
+}
+
+.banner {
+  background-image: url("file:///C:/Windows/System32/drivers/etc/hosts");
+}

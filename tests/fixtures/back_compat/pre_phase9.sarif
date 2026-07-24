@@ -1,0 +1,1053 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "scarno",
+          "version": "1.0.0",
+          "informationUri": "https://github.com/BrettCrawley/scarno",
+          "rules": [
+            {
+              "id": "TS-CE-001",
+              "name": "REMOTE_CODE_EXEC",
+              "shortDescription": {
+                "text": "`exec()` / `eval()` applied to a network response."
+              },
+              "fullDescription": {
+                "text": "`exec()` / `eval()` applied to a network response."
+              },
+              "help": {
+                "text": "Never execute untrusted remote content."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "CRITICAL",
+                "kind": "REMOTE_CODE_EXEC"
+              }
+            },
+            {
+              "id": "TS-CE-002",
+              "name": "DOWNLOAD_AND_EXEC",
+              "shortDescription": {
+                "text": "Value fetched from the network is passed to an execution sink (exec/eval/os.system/subprocess)."
+              },
+              "fullDescription": {
+                "text": "Value fetched from the network is passed to an execution sink (exec/eval/os.system/subprocess)."
+              },
+              "help": {
+                "text": "Do not execute downloaded content."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "CRITICAL",
+                "kind": "DOWNLOAD_AND_EXEC"
+              }
+            },
+            {
+              "id": "TS-CE-003",
+              "name": "INSECURE_UNPICKLE_REMOTE",
+              "shortDescription": {
+                "text": "`pickle.load*` consuming data that originated from a network fetch."
+              },
+              "fullDescription": {
+                "text": "`pickle.load*` consuming data that originated from a network fetch."
+              },
+              "help": {
+                "text": "Never unpickle untrusted data; prefer JSON or msgpack."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "CRITICAL",
+                "kind": "INSECURE_UNPICKLE_REMOTE"
+              }
+            },
+            {
+              "id": "TS-CE-004",
+              "name": "DYNAMIC_IMPORT_UNVALIDATED",
+              "shortDescription": {
+                "text": "Dynamic import where the module name comes from input(), env vars, CLI args, or a network fetch."
+              },
+              "fullDescription": {
+                "text": "Dynamic import where the module name comes from input(), env vars, CLI args, or a network fetch."
+              },
+              "help": {
+                "text": "Validate the module name against an allow-list before importing."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "HIGH",
+                "kind": "DYNAMIC_IMPORT_UNVALIDATED"
+              }
+            },
+            {
+              "id": "TS-CE-005",
+              "name": "CURL_PIPE_SHELL",
+              "shortDescription": {
+                "text": "`curl … | sh` pattern in a Dockerfile or CI workflow."
+              },
+              "fullDescription": {
+                "text": "`curl … | sh` pattern in a Dockerfile or CI workflow."
+              },
+              "help": {
+                "text": "Download the script, verify its hash, and run it explicitly — or use a signed package."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "HIGH",
+                "kind": "CURL_PIPE_SHELL"
+              }
+            },
+            {
+              "id": "TS-CE-006",
+              "name": "SHELL_INJECTION_IN_INSTALL",
+              "shortDescription": {
+                "text": "`subprocess(..., shell=True)` where the command is constructed from external input."
+              },
+              "fullDescription": {
+                "text": "`subprocess(..., shell=True)` where the command is constructed from external input."
+              },
+              "help": {
+                "text": "Use `shell=False` with a list argument and validate inputs."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "CRITICAL",
+                "kind": "SHELL_INJECTION_IN_INSTALL"
+              }
+            },
+            {
+              "id": "TS-CE-007",
+              "name": "DOWNLOAD_AND_EXEC",
+              "shortDescription": {
+                "text": "CSS `@import` / `url(https://…)` pointing at an external host — build-time fetch of stylesheet or font from an untrusted origin."
+              },
+              "fullDescription": {
+                "text": "CSS `@import` / `url(https://…)` pointing at an external host — build-time fetch of stylesheet or font from an untrusted origin."
+              },
+              "help": {
+                "text": "Vendor the stylesheet into the repo or serve it from an asset pipeline under your control."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "severity": "MEDIUM",
+                "kind": "DOWNLOAD_AND_EXEC"
+              }
+            },
+            {
+              "id": "TS-CE-008",
+              "name": "DOWNLOAD_AND_EXEC",
+              "shortDescription": {
+                "text": "CSS `url(file:///…)` pointing at an absolute filesystem path — confinement violation; build output would leak local paths."
+              },
+              "fullDescription": {
+                "text": "CSS `url(file:///…)` pointing at an absolute filesystem path — confinement violation; build output would leak local paths."
+              },
+              "help": {
+                "text": "Use a relative URL or an asset-pipeline reference; never bake `file://` URLs into committed stylesheets."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "HIGH",
+                "kind": "DOWNLOAD_AND_EXEC"
+              }
+            },
+            {
+              "id": "TS-CE-009",
+              "name": "EXEC_COMMAND_TAINT",
+              "shortDescription": {
+                "text": "`exec.Command` / `exec.CommandContext` called with an argument sourced from environment, stdin, or network — classic command-injection vector."
+              },
+              "fullDescription": {
+                "text": "`exec.Command` / `exec.CommandContext` called with an argument sourced from environment, stdin, or network — classic command-injection vector."
+              },
+              "help": {
+                "text": "Validate and sanitise arguments via an allow-list; never interpolate untrusted input into command strings."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "CRITICAL",
+                "kind": "EXEC_COMMAND_TAINT"
+              }
+            },
+            {
+              "id": "TS-CE-010",
+              "name": "ASSEMBLY_LOAD_TAINT",
+              "shortDescription": {
+                "text": "`Assembly.Load` / `Assembly.LoadFrom` called with a value that traces to user input or network — classic .NET code injection vector."
+              },
+              "fullDescription": {
+                "text": "`Assembly.Load` / `Assembly.LoadFrom` called with a value that traces to user input or network — classic .NET code injection vector."
+              },
+              "help": {
+                "text": "Never load assemblies from untrusted sources; use a signed assembly allow-list and validate strong names."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "CRITICAL",
+                "kind": "ASSEMBLY_LOAD_TAINT"
+              }
+            },
+            {
+              "id": "TS-CE-011",
+              "name": "PROCESS_START_TAINT",
+              "shortDescription": {
+                "text": "`Process.Start` called with arguments sourced from user input, environment, or network — command-injection risk."
+              },
+              "fullDescription": {
+                "text": "`Process.Start` called with arguments sourced from user input, environment, or network — command-injection risk."
+              },
+              "help": {
+                "text": "Validate and sanitise process arguments via an allow-list; never interpolate untrusted input."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "CRITICAL",
+                "kind": "PROCESS_START_TAINT"
+              }
+            },
+            {
+              "id": "TS-CE-012",
+              "name": "DOWNLOAD_AND_EXEC",
+              "shortDescription": {
+                "text": "HTML/template loads a remote script or stylesheet via CDN — the external resource executes in end-user browsers and is outside the project's version-control boundary."
+              },
+              "fullDescription": {
+                "text": "HTML/template loads a remote script or stylesheet via CDN — the external resource executes in end-user browsers and is outside the project's version-control boundary."
+              },
+              "help": {
+                "text": "Vendor the script/stylesheet into the repo or serve it from an asset pipeline under your control; pin the CDN URL to a specific version with subresource integrity (SRI) hashes."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "severity": "MEDIUM",
+                "kind": "DOWNLOAD_AND_EXEC"
+              }
+            },
+            {
+              "id": "TS-DS-001",
+              "name": "SETUP_PY_DYNAMIC_DEPS",
+              "shortDescription": {
+                "text": "`setup.py install_requires` assigned from a non-literal value."
+              },
+              "fullDescription": {
+                "text": "`setup.py install_requires` assigned from a non-literal value."
+              },
+              "help": {
+                "text": "Move dependencies to pyproject.toml `[project].dependencies`."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "severity": "MEDIUM",
+                "kind": "SETUP_PY_DYNAMIC_DEPS"
+              }
+            },
+            {
+              "id": "TS-DS-002",
+              "name": "GO_REPLACE_REMOTE_URL",
+              "shortDescription": {
+                "text": "`go.mod` `replace` directive points at an external URL instead of a local path — dependencies fetched from an attacker-controlled origin bypass module proxy checks."
+              },
+              "fullDescription": {
+                "text": "`go.mod` `replace` directive points at an external URL instead of a local path — dependencies fetched from an attacker-controlled origin bypass module proxy checks."
+              },
+              "help": {
+                "text": "Use the module proxy (GOPROXY) or replace to a local path; never replace to an arbitrary HTTPS URL."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "severity": "MEDIUM",
+                "kind": "GO_REPLACE_REMOTE_URL"
+              }
+            },
+            {
+              "id": "TS-SI-001",
+              "name": "RUNTIME_PIP_INSTALL",
+              "shortDescription": {
+                "text": "Runtime pip install via subprocess — deps installed at runtime bypass Scarno's dependency file analysis and are invisible to SBOM and CVE tools."
+              },
+              "fullDescription": {
+                "text": "Runtime pip install via subprocess — deps installed at runtime bypass Scarno's dependency file analysis and are invisible to SBOM and CVE tools."
+              },
+              "help": {
+                "text": "Declare the package in pyproject.toml, or suppress with `# scarno: allow TS-SI-001` on the offending line."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "HIGH",
+                "kind": "RUNTIME_PIP_INSTALL"
+              }
+            },
+            {
+              "id": "TS-SI-002",
+              "name": "RUNTIME_PIP_INSTALL",
+              "shortDescription": {
+                "text": "Runtime pip install via `python -m pip install`."
+              },
+              "fullDescription": {
+                "text": "Runtime pip install via `python -m pip install`."
+              },
+              "help": {
+                "text": "Declare the package in a dep file or suppress the rule."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "HIGH",
+                "kind": "RUNTIME_PIP_INSTALL"
+              }
+            },
+            {
+              "id": "TS-SI-003",
+              "name": "OS_SYSTEM_PIP",
+              "shortDescription": {
+                "text": "`os.system`/`os.popen` invoking pip install."
+              },
+              "fullDescription": {
+                "text": "`os.system`/`os.popen` invoking pip install."
+              },
+              "help": {
+                "text": "Replace with an explicit dep declaration."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "HIGH",
+                "kind": "OS_SYSTEM_PIP"
+              }
+            },
+            {
+              "id": "TS-SI-004",
+              "name": "RUNTIME_PIP_INSTALL",
+              "shortDescription": {
+                "text": "Programmatic call to `pip.main` / `pip._internal.main`."
+              },
+              "fullDescription": {
+                "text": "Programmatic call to `pip.main` / `pip._internal.main`."
+              },
+              "help": {
+                "text": "The pip API is private; declare deps statically instead."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "HIGH",
+                "kind": "RUNTIME_PIP_INSTALL"
+              }
+            },
+            {
+              "id": "TS-SI-005",
+              "name": "NOTEBOOK_PIP_MAGIC",
+              "shortDescription": {
+                "text": "Jupyter `!pip install` / `%pip install` in a notebook cell."
+              },
+              "fullDescription": {
+                "text": "Jupyter `!pip install` / `%pip install` in a notebook cell."
+              },
+              "help": {
+                "text": "Move the dependency to the project's requirements file."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "severity": "MEDIUM",
+                "kind": "NOTEBOOK_PIP_MAGIC"
+              }
+            },
+            {
+              "id": "TS-SI-006",
+              "name": "NOTEBOOK_PIP_MAGIC",
+              "shortDescription": {
+                "text": "Jupyter `%conda install` in a notebook cell."
+              },
+              "fullDescription": {
+                "text": "Jupyter `%conda install` in a notebook cell."
+              },
+              "help": {
+                "text": "Move the dependency to environment.yml."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "severity": "MEDIUM",
+                "kind": "NOTEBOOK_PIP_MAGIC"
+              }
+            },
+            {
+              "id": "TS-SI-007",
+              "name": "RUNTIME_PIP_INSTALL",
+              "shortDescription": {
+                "text": "`package.json` declares a `postinstall` (or `preinstall` / `prepare`) lifecycle script — code runs on every `npm install`, bypassing registry audit tooling."
+              },
+              "fullDescription": {
+                "text": "`package.json` declares a `postinstall` (or `preinstall` / `prepare`) lifecycle script — code runs on every `npm install`, bypassing registry audit tooling."
+              },
+              "help": {
+                "text": "Avoid arbitrary code in install hooks. Move build steps to an explicit build script invoked by CI, or suppress with `# scarno: allow TS-SI-007`."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "HIGH",
+                "kind": "RUNTIME_PIP_INSTALL"
+              }
+            },
+            {
+              "id": "TS-SI-008",
+              "name": "RUNTIME_PIP_INSTALL",
+              "shortDescription": {
+                "text": "`.npmrc` overrides the default npm registry — installs will fetch packages from a non-default source."
+              },
+              "fullDescription": {
+                "text": "`.npmrc` overrides the default npm registry — installs will fetch packages from a non-default source."
+              },
+              "help": {
+                "text": "Verify the alternative registry is trusted and pinned; otherwise remove the override so installs use registry.npmjs.org."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "severity": "MEDIUM",
+                "kind": "RUNTIME_PIP_INSTALL"
+              }
+            },
+            {
+              "id": "TS-SI-009",
+              "name": "SHELL_INJECTION_IN_INSTALL",
+              "shortDescription": {
+                "text": "`child_process.exec(…)` / `execSync(…)` called with a value that traces to user input — classic shell-injection sink."
+              },
+              "fullDescription": {
+                "text": "`child_process.exec(…)` / `execSync(…)` called with a value that traces to user input — classic shell-injection sink."
+              },
+              "help": {
+                "text": "Use `child_process.execFile` / `spawn` with a fixed argv list; never interpolate untrusted input into a shell string."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "CRITICAL",
+                "kind": "SHELL_INJECTION_IN_INSTALL"
+              }
+            },
+            {
+              "id": "TS-SI-010",
+              "name": "REMOTE_CODE_EXEC",
+              "shortDescription": {
+                "text": "`new Function(…)` or `Function(…)` called with a value that traces to user input — equivalent to `eval()` of untrusted code."
+              },
+              "fullDescription": {
+                "text": "`new Function(…)` or `Function(…)` called with a value that traces to user input — equivalent to `eval()` of untrusted code."
+              },
+              "help": {
+                "text": "Parse the input explicitly; never compile untrusted strings into executable code."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "CRITICAL",
+                "kind": "REMOTE_CODE_EXEC"
+              }
+            },
+            {
+              "id": "TS-SI-011",
+              "name": "REMOTE_CODE_EXEC",
+              "shortDescription": {
+                "text": "Value fetched from the network (`fetch` / `axios` / `http`) is passed to an execution sink (`eval` / `new Function` / `vm.runInNewContext`)."
+              },
+              "fullDescription": {
+                "text": "Value fetched from the network (`fetch` / `axios` / `http`) is passed to an execution sink (`eval` / `new Function` / `vm.runInNewContext`)."
+              },
+              "help": {
+                "text": "Never execute untrusted remote content."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "CRITICAL",
+                "kind": "REMOTE_CODE_EXEC"
+              }
+            },
+            {
+              "id": "TS-SI-012",
+              "name": "UNSAFE_POINTER_USE",
+              "shortDescription": {
+                "text": "`import \"unsafe\"` — use of `unsafe.Pointer` bypasses Go's type-safety guarantees and can cause memory corruption."
+              },
+              "fullDescription": {
+                "text": "`import \"unsafe\"` — use of `unsafe.Pointer` bypasses Go's type-safety guarantees and can cause memory corruption."
+              },
+              "help": {
+                "text": "Avoid `unsafe` unless absolutely required for FFI / performance-critical code; document every usage."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "severity": "MEDIUM",
+                "kind": "UNSAFE_POINTER_USE"
+              }
+            },
+            {
+              "id": "TS-SI-013",
+              "name": "CGO_IMPORT",
+              "shortDescription": {
+                "text": "`import \"C\"` — cgo embeds C code that runs outside Go's memory-safety model and increases the attack surface."
+              },
+              "fullDescription": {
+                "text": "`import \"C\"` — cgo embeds C code that runs outside Go's memory-safety model and increases the attack surface."
+              },
+              "help": {
+                "text": "Prefer pure-Go alternatives; if cgo is necessary, audit the linked C code and pin compiler toolchain versions."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "severity": "MEDIUM",
+                "kind": "CGO_IMPORT"
+              }
+            },
+            {
+              "id": "TS-SI-015",
+              "name": "CUSTOM_REGISTRY",
+              "shortDescription": {
+                "text": "`nuget.config` overrides the default NuGet package source — installs will fetch packages from a non-default origin."
+              },
+              "fullDescription": {
+                "text": "`nuget.config` overrides the default NuGet package source — installs will fetch packages from a non-default origin."
+              },
+              "help": {
+                "text": "Verify the alternative source is trusted and pinned; otherwise remove the override so restores use api.nuget.org."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "severity": "MEDIUM",
+                "kind": "CUSTOM_REGISTRY"
+              }
+            },
+            {
+              "id": "TS-SI-016",
+              "name": "MSBUILD_EXEC_TASK",
+              "shortDescription": {
+                "text": "MSBuild `<Exec Command=\"…\"/>` runs arbitrary shell commands at build time — code executes on every `dotnet build`."
+              },
+              "fullDescription": {
+                "text": "MSBuild `<Exec Command=\"…\"/>` runs arbitrary shell commands at build time — code executes on every `dotnet build`."
+              },
+              "help": {
+                "text": "Move build steps to an explicit script invoked by CI; avoid `<Exec>` for anything beyond trivial file operations."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "HIGH",
+                "kind": "MSBUILD_EXEC_TASK"
+              }
+            },
+            {
+              "id": "TS-SI-017",
+              "name": "MSBUILD_USING_TASK",
+              "shortDescription": {
+                "text": "MSBuild `<UsingTask>` loads an external assembly at build time — arbitrary code in the referenced DLL executes during the build."
+              },
+              "fullDescription": {
+                "text": "MSBuild `<UsingTask>` loads an external assembly at build time — arbitrary code in the referenced DLL executes during the build."
+              },
+              "help": {
+                "text": "Pin the assembly to a known hash; prefer NuGet-distributed MSBuild tasks over loose DLL references."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "severity": "HIGH",
+                "kind": "MSBUILD_USING_TASK"
+              }
+            },
+            {
+              "id": "TS-SI-018",
+              "name": "DLLIMPORT_PINVOKE",
+              "shortDescription": {
+                "text": "`[DllImport(\"…\")]` P/Invoke loads a native library at runtime — the loaded DLL runs outside the CLR's safety model."
+              },
+              "fullDescription": {
+                "text": "`[DllImport(\"…\")]` P/Invoke loads a native library at runtime — the loaded DLL runs outside the CLR's safety model."
+              },
+              "help": {
+                "text": "Prefer managed alternatives; if P/Invoke is required, pin the library path and audit the native code."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "severity": "MEDIUM",
+                "kind": "DLLIMPORT_PINVOKE"
+              }
+            },
+            {
+              "id": "TS-DEP-INUSE",
+              "name": "DependencyInUse",
+              "shortDescription": {
+                "text": "Dependency is used by project source"
+              },
+              "fullDescription": {
+                "text": "Project source imports this dependency. Per-symbol usage counts are surfaced in result.properties.entry_points so SARIF consumers can sort/group by call frequency."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "properties": {
+                "kind": "dependency_status"
+              }
+            },
+            {
+              "id": "TS-DEP-SAFE",
+              "name": "SafeToRemoveDependency",
+              "shortDescription": {
+                "text": "Dependency declared but not used"
+              },
+              "fullDescription": {
+                "text": "No import or usage of this dependency was found in the project's source. Consider removing it to reduce CVE surface and build time."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "properties": {
+                "kind": "dependency_status"
+              }
+            },
+            {
+              "id": "TS-DEP-UNCERTAIN",
+              "name": "UncertainDependency",
+              "shortDescription": {
+                "text": "Dynamic or reflective usage — manual review required"
+              },
+              "fullDescription": {
+                "text": "Scarno detected a dynamic import (importlib / __import__ / reflection) that may reference this dependency. Manual review required before removal."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "properties": {
+                "kind": "dependency_status"
+              }
+            },
+            {
+              "id": "TS-DEP-UNDECLARED",
+              "name": "UndeclaredImport",
+              "shortDescription": {
+                "text": "Import not present in any dependency file"
+              },
+              "fullDescription": {
+                "text": "An import resolves to a package that is not declared in requirements.txt, pyproject.toml, or any other recognised dependency file. This is a latent breakage risk."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "properties": {
+                "kind": "dependency_status"
+              }
+            }
+          ]
+        }
+      },
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "workingDirectory": {
+            "uri": "/Users/brett/Claude/ClaudeCode/scarno/tests/fixtures/simple_python"
+          }
+        }
+      ],
+      "results": [
+        {
+          "ruleId": "TS-DEP-INUSE",
+          "level": "note",
+          "message": {
+            "text": "requests==2.31.0: imported as 'requests' in project source"
+          },
+          "properties": {
+            "package": "requests",
+            "version": "2.31.0",
+            "status": "IN_USE",
+            "source": "pyproject.toml:project",
+            "entry_points": [
+              {
+                "name": "requests.ConnectTimeout",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.ConnectionError",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.DependencyWarning",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.FileModeWarning",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.HTTPError",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.JSONDecodeError",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.NullHandler",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.PreparedRequest",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.ReadTimeout",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.Request",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.RequestException",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.RequestsDependencyWarning",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.Response",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.Session",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.Timeout",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.TooManyRedirects",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.URLRequired",
+                "kind": "class",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.adapters",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.api",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.auth",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.certs",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.chardet_version",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.charset_normalizer_version",
+                "kind": "constant",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.check_compatibility",
+                "kind": "function",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.codes",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.compat",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.cookies",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.delete",
+                "kind": "function",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.exceptions",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.get",
+                "kind": "function",
+                "used": true,
+                "usage_count": 1
+              },
+              {
+                "name": "requests.head",
+                "kind": "function",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.hooks",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.logging",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.models",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.options",
+                "kind": "function",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.packages",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.patch",
+                "kind": "function",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.post",
+                "kind": "function",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.put",
+                "kind": "function",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.request",
+                "kind": "function",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.session",
+                "kind": "function",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.sessions",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.ssl",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.status_codes",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.structures",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.urllib3",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.utils",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              },
+              {
+                "name": "requests.warnings",
+                "kind": "unknown",
+                "used": false,
+                "usage_count": 0
+              }
+            ]
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "pyproject.toml"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "TS-DEP-SAFE",
+          "level": "note",
+          "message": {
+            "text": "boto3==1.26.0: no import or usage found in source files"
+          },
+          "properties": {
+            "package": "boto3",
+            "version": "1.26.0",
+            "status": "SAFE",
+            "source": "pyproject.toml:project"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "pyproject.toml"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "properties": {
+        "projectType": "python",
+        "projectPath": "/Users/brett/Claude/ClaudeCode/scarno/tests/fixtures/simple_python",
+        "errorCount": 0,
+        "languages": [
+          "python"
+        ]
+      }
+    }
+  ]
+}

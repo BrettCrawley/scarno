@@ -1,0 +1,258 @@
+name: Scarno
+description: >-
+  Smart dependency pruner — identifies unused, undeclared, and
+  suspicious-install dependencies across Python, Java/Kotlin, and
+  (once REQ-10+ lands) JS/TS/CSS, Go, C#. Uploads SARIF to Code
+  Scanning, posts a sticky PR-comment checklist, and annotates each
+  finding inline in the "Files changed" view.
+author: Scarno contributors
+branding:
+  icon: scissors
+  color: green
+
+inputs:
+  path:
+    description: Directory to analyse (relative to repo root).
+    required: false
+    default: "."
+  format:
+    description: Primary output format (text / json / markdown / sarif).
+    required: false
+    default: sarif
+  output-file:
+    description: Where to write the primary report file.
+    required: false
+    default: scarno.sarif
+  fail-on-severity:
+    description: >-
+      Exit code 3 when any finding at this severity or above is
+      present (LOW / MEDIUM / HIGH / CRITICAL).
+    required: false
+    default: HIGH
+  show-suppressed:
+    description: Include suppressed findings in the report.
+    required: false
+    default: "false"
+  upload-sarif:
+    description: >-
+      When ``true`` and ``format`` is ``sarif``, upload via
+      github/codeql-action/upload-sarif (requires
+      ``security-events: write`` permission on the job).
+    required: false
+    default: "true"
+  comment-on-pr:
+    description: >-
+      When ``true`` and the event is ``pull_request``, post a sticky
+      Markdown comment with the analysis checklist (requires
+      ``pull-requests: write`` permission).
+    required: false
+    default: "true"
+  job-summary:
+    description: >-
+      When ``true``, write the Markdown report to $GITHUB_STEP_SUMMARY.
+    required: false
+    default: "true"
+  annotate:
+    description: >-
+      When ``true``, emit per-finding ``::error`` / ``::warning`` /
+      ``::notice`` workflow commands.
+    required: false
+    default: "true"
+  scarno-version:
+    description: Scarno PyPI version to install.
+    required: false
+    default: latest
+  python-version:
+    description: Python runtime version.
+    required: false
+    default: "3.12"
+
+outputs:
+  safe-count:
+    description: Number of SAFE-to-remove dependencies.
+    value: ${{ steps.collect.outputs.safe-count }}
+  uncertain-count:
+    description: Number of UNCERTAIN dependencies.
+    value: ${{ steps.collect.outputs.uncertain-count }}
+  undeclared-count:
+    description: Number of UNDECLARED imports.
+    value: ${{ steps.collect.outputs.undeclared-count }}
+  finding-count:
+    description: Total unsuppressed security findings.
+    value: ${{ steps.collect.outputs.finding-count }}
+  highest-severity:
+    description: "Highest severity seen (NONE / LOW / MEDIUM / HIGH / CRITICAL)."
+    value: ${{ steps.collect.outputs.highest-severity }}
+  exit-code:
+    description: The Scarno CLI exit code (0 / 1 / 2 / 3).
+    value: ${{ steps.run.outputs.exit-code }}
+  sarif-path:
+    description: Absolute path of the SARIF report (when format=sarif).
+    value: ${{ steps.run.outputs.sarif-path }}
+  markdown-path:
+    description: Absolute path of the Markdown report.
+    value: ${{ steps.run.outputs.markdown-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Scarno
+      # DELIBERATELY uses pip install from PyPI — no curl | sh (we'd
+      # be hypocrites; see REQ-3c rule TS-CE-005).
+      shell: bash
+      env:
+        TS_VERSION: ${{ inputs.scarno-version }}
+      run: |
+        set -euo pipefail
+        if [[ "${TS_VERSION}" == "latest" ]]; then
+          pip install --upgrade scarno
+        else
+          pip install "scarno==${TS_VERSION}"
+        fi
+        scarno --help > /dev/null
+
+    - name: Run Scarno (primary report)
+      id: run
+      shell: bash
+      env:
+        TS_PATH: ${{ inputs.path }}
+        TS_FORMAT: ${{ inputs.format }}
+        TS_OUTPUT: ${{ inputs.output-file }}
+        TS_SEVERITY: ${{ inputs.fail-on-severity }}
+        TS_SHOW_SUPPRESSED: ${{ inputs.show-suppressed }}
+      run: |
+        set +e
+        FLAGS=()
+        if [[ "${TS_SHOW_SUPPRESSED}" == "true" ]]; then
+          FLAGS+=(--show-suppressed)
+        fi
+        scarno "${TS_PATH}" \
+          --format "${TS_FORMAT}" \
+          --output "${TS_OUTPUT}" \
+          --fail-on-severity "${TS_SEVERITY}" \
+          "${FLAGS[@]}"
+        EXIT_CODE=$?
+        set -e
+        echo "exit-code=${EXIT_CODE}" >> "${GITHUB_OUTPUT}"
+        ABS_OUT="$(realpath "${TS_OUTPUT}" 2>/dev/null || echo "${TS_OUTPUT}")"
+        if [[ "${TS_FORMAT}" == "sarif" ]]; then
+          echo "sarif-path=${ABS_OUT}" >> "${GITHUB_OUTPUT}"
+        fi
+
+    - name: Run Scarno (Markdown for comment / summary)
+      id: markdown
+      if: ${{ inputs.comment-on-pr == 'true' || inputs.job-summary == 'true' }}
+      shell: bash
+      env:
+        TS_PATH: ${{ inputs.path }}
+      run: |
+        set +e
+        scarno "${TS_PATH}" --format markdown --output scarno.md
+        set -e
+        echo "markdown-path=$(realpath scarno.md)" >> "${GITHUB_OUTPUT}"
+
+    - name: Parse JSON report for outputs + annotations
+      id: collect
+      shell: bash
+      env:
+        TS_PATH: ${{ inputs.path }}
+        TS_ANNOTATE: ${{ inputs.annotate }}
+      run: |
+        set -euo pipefail
+        scarno "${TS_PATH}" --format json --output scarno.json || true
+        python - <<'PY'
+        import json, os, sys
+        try:
+            with open("scarno.json") as f:
+                data = json.load(f)
+        except Exception:
+            data = {"dependencies": [], "findings": []}
+
+        deps = data.get("dependencies") or []
+        findings = [f for f in (data.get("findings") or []) if not f.get("suppressed")]
+
+        def _count(status):
+            return sum(1 for d in deps if d.get("status") == status)
+
+        safe = _count("SAFE")
+        uncertain = _count("UNCERTAIN")
+        undeclared = _count("UNDECLARED")
+        finding_count = len(findings)
+
+        order = ["NONE", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
+        seen = {f.get("severity", "LOW") for f in findings}
+        highest = "NONE"
+        for s in order:
+            if s in seen:
+                highest = s
+
+        with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+            out.write(f"safe-count={safe}\n")
+            out.write(f"uncertain-count={uncertain}\n")
+            out.write(f"undeclared-count={undeclared}\n")
+            out.write(f"finding-count={finding_count}\n")
+            out.write(f"highest-severity={highest}\n")
+
+        # Per-finding workflow-command annotations
+        if os.environ.get("TS_ANNOTATE", "true") == "true":
+            sev_to_cmd = {
+                "CRITICAL": "error",
+                "HIGH": "error",
+                "MEDIUM": "warning",
+                "LOW": "notice",
+            }
+            for f in findings:
+                cmd = sev_to_cmd.get(f.get("severity", "LOW"), "warning")
+                file_ = f.get("file_path", "")
+                line = f.get("line", 1)
+                rule_id = f.get("rule_id", "TS-UNKNOWN")
+                msg = f.get("message", "")
+                # Escape workflow-command control chars per GitHub spec
+                msg = msg.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                print(f"::{cmd} file={file_},line={line},title={rule_id}::{msg}")
+        PY
+
+    - name: Upload SARIF to Code Scanning
+      if: ${{ inputs.upload-sarif == 'true' && inputs.format == 'sarif' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.output-file }}
+        category: scarno
+
+    - name: Post sticky PR comment
+      if: ${{ inputs.comment-on-pr == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        MARKER='<!-- scarno-report -->'
+        BODY=$(printf '%s\n\n' "${MARKER}"; cat scarno.md)
+        # Find any prior comment by github-actions[bot] that starts with the marker.
+        EXISTING_ID=$(gh api -X GET \
+          "/repos/${REPO}/issues/${PR_NUMBER}/comments" \
+          --jq "[.[] | select(.user.login==\"github-actions[bot]\" and (.body | startswith(\"${MARKER}\")))] | .[0].id // empty")
+        if [[ -n "${EXISTING_ID}" ]]; then
+          gh api -X PATCH \
+            "/repos/${REPO}/issues/comments/${EXISTING_ID}" \
+            -f body="${BODY}" > /dev/null
+        else
+          gh api -X POST \
+            "/repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            -f body="${BODY}" > /dev/null
+        fi
+
+    - name: Write job summary
+      if: ${{ inputs.job-summary == 'true' }}
+      shell: bash
+      run: |
+        if [[ -f scarno.md ]]; then
+          cat scarno.md >> "${GITHUB_STEP_SUMMARY}"
+        fi

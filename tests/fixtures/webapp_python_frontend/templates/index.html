@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/lodash@4.17.21/lodash.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5/dist/css/bootstrap.min.css">
+    <style>
+        @import url("https://fonts.googleapis.com/css2?family=Roboto");
+    </style>
+</head>
+<body>
+    <div id="app">{{ message }}</div>
+    <script>
+        const app = Vue.createApp({ data() { return { message: 'Hello' } } });
+        const result = _.merge({}, {a: 1});
+    </script>
+</body>
+</html>

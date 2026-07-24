@@ -1,0 +1,339 @@
+{
+  "scarno_version": "1.0.0",
+  "analysis_timestamp": "2026-05-11T08:23:57Z",
+  "project_type": "python",
+  "project_path": "/Users/brett/Claude/ClaudeCode/scarno/tests/fixtures/simple_python",
+  "languages": [
+    "python"
+  ],
+  "dependencies": [
+    {
+      "name": "requests",
+      "version": "2.31.0",
+      "status": "IN_USE",
+      "reason": "imported as 'requests' in project source",
+      "entry_points": [
+        {
+          "name": "requests.ConnectTimeout",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.ConnectionError",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.DependencyWarning",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.FileModeWarning",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.HTTPError",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.JSONDecodeError",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.NullHandler",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.PreparedRequest",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.ReadTimeout",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.Request",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.RequestException",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.RequestsDependencyWarning",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.Response",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.Session",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.Timeout",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.TooManyRedirects",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.URLRequired",
+          "kind": "class",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.adapters",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.api",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.auth",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.certs",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.chardet_version",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.charset_normalizer_version",
+          "kind": "constant",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.check_compatibility",
+          "kind": "function",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.codes",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.compat",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.cookies",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.delete",
+          "kind": "function",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.exceptions",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.get",
+          "kind": "function",
+          "used": true,
+          "usage_count": 1
+        },
+        {
+          "name": "requests.head",
+          "kind": "function",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.hooks",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.logging",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.models",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.options",
+          "kind": "function",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.packages",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.patch",
+          "kind": "function",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.post",
+          "kind": "function",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.put",
+          "kind": "function",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.request",
+          "kind": "function",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.session",
+          "kind": "function",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.sessions",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.ssl",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.status_codes",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.structures",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.urllib3",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.utils",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        },
+        {
+          "name": "requests.warnings",
+          "kind": "unknown",
+          "used": false,
+          "usage_count": 0
+        }
+      ],
+      "entry_points_used": 1,
+      "entry_points_total": 48,
+      "source": "pyproject.toml:project",
+      "vendored_path": null,
+      "resolved": true,
+      "is_type_stub": false,
+      "ecosystem": "pypi",
+      "is_transitive": false,
+      "imported_directly": false,
+      "manifest_redundant": false,
+      "redundant_parent": null
+    },
+    {
+      "name": "boto3",
+      "version": "1.26.0",
+      "status": "SAFE",
+      "reason": "no import or usage found in source files",
+      "entry_points": [],
+      "entry_points_used": 0,
+      "entry_points_total": 0,
+      "source": "pyproject.toml:project",
+      "vendored_path": null,
+      "resolved": true,
+      "is_type_stub": false,
+      "ecosystem": "pypi",
+      "is_transitive": false,
+      "imported_directly": false,
+      "manifest_redundant": false,
+      "redundant_parent": null
+    }
+  ],
+  "errors": [],
+  "findings": [],
+  "dep_graph": {}
+}

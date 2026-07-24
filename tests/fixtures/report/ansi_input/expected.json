@@ -1,0 +1,19 @@
+{
+  "project_type": "python",
+  "project_path": "/fixture/ansi_input",
+  "languages": [
+    "python"
+  ],
+  "dependencies": [
+    {
+      "name": "requests\u001b[2Jbeautiful",
+      "version": "\u001b[31mbold\u001b[0m",
+      "status": "SAFE",
+      "reason": "ANSI in name \u001b[5mblink\u001b[0m",
+      "source": "pyproject.toml:dependencies",
+      "ecosystem": "pypi"
+    }
+  ],
+  "findings": [],
+  "errors": []
+}

@@ -1,0 +1,28 @@
+{
+  "project_type": "python",
+  "project_path": "/fixture/entry_points",
+  "languages": ["python"],
+  "dependencies": [
+    {
+      "name": "django",
+      "version": "5.0.0",
+      "status": "IN_USE",
+      "reason": "3 of 7 entry points imported",
+      "source": "pyproject.toml:dependencies",
+      "ecosystem": "pypi",
+      "entry_points": [
+        {"name": "django.urls.path", "kind": "function", "used": true},
+        {"name": "django.http.HttpResponse", "kind": "class", "used": true},
+        {"name": "django.db.models.Model", "kind": "class", "used": true},
+        {"name": "django.forms.Form", "kind": "class", "used": false},
+        {"name": "django.contrib.admin", "kind": "module", "used": false},
+        {"name": "django.core.mail", "kind": "module", "used": false},
+        {"name": "django.utils.timezone", "kind": "module", "used": false}
+      ],
+      "entry_points_used": 3,
+      "entry_points_total": 7
+    }
+  ],
+  "findings": [],
+  "errors": []
+}

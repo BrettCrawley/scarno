@@ -1,0 +1,4 @@
+# Fixture stub — adversarial ANSI dep-name payloads are written
+# programmatically via tmp_path in tests/security/test_adversarial.py.
+# This static copy exists as documentation only.
+safe==1.0.0

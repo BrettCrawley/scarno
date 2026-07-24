@@ -1,0 +1,6 @@
+# github.com/declared/a v1.0.0
+## explicit
+github.com/declared/a
+# github.com/stowaway v0.0.1
+## explicit
+github.com/stowaway

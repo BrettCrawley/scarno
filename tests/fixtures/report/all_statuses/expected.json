@@ -1,0 +1,41 @@
+{
+  "project_type": "python",
+  "project_path": "/fixture/all_statuses",
+  "languages": ["python"],
+  "dependencies": [
+    {
+      "name": "requests",
+      "version": "2.31.0",
+      "status": "IN_USE",
+      "reason": "imported in module app.main",
+      "source": "pyproject.toml:dependencies",
+      "ecosystem": "pypi"
+    },
+    {
+      "name": "numpy",
+      "version": "1.26.0",
+      "status": "SAFE",
+      "reason": "no import or usage found in source files",
+      "source": "pyproject.toml:dependencies",
+      "ecosystem": "pypi"
+    },
+    {
+      "name": "pandas",
+      "version": "2.1.0",
+      "status": "UNCERTAIN",
+      "reason": "dynamic import with non-literal module name",
+      "source": "pyproject.toml:dependencies",
+      "ecosystem": "pypi"
+    },
+    {
+      "name": "mystery",
+      "version": null,
+      "status": "UNDECLARED",
+      "reason": "imported but not declared",
+      "source": "detected:mystery",
+      "ecosystem": "detected"
+    }
+  ],
+  "findings": [],
+  "errors": ["pyproject.toml: optional-dependencies group 'test' missing"]
+}

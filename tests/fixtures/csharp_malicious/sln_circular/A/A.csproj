@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- A → B; combined with B → A this creates a cycle. -->
+    <ProjectReference Include="..\B\B.csproj" />
+    <PackageReference Include="PkgA" Version="1.0.0" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,12 @@
+{
+  "name": "ts-simple-js",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "express": "^4.19.0",
+    "lodash": "^4.17.21"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}

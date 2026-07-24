@@ -1,0 +1,10 @@
+<Project>
+  <!-- Attempts to import another props file via parent-traversal path.
+       Scarno's path-confinement must refuse to follow this outside
+       the project root (SEC-NEW-26). -->
+  <Import Project="..\..\..\outside\evil.props" Condition="Exists('..\..\..\outside\evil.props')" />
+  <ItemGroup>
+    <!-- If the imported file were loaded, this ref would leak. -->
+    <PackageReference Include="LocalOnly" Version="1.0.0" />
+  </ItemGroup>
+</Project>

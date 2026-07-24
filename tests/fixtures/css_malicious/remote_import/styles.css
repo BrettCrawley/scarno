@@ -1,0 +1,8 @@
+/* Remote @import patterns — must trigger TS-CE-007 */
+@import "https://fonts.googleapis.com/css?family=Roboto";
+@import url("https://cdn.evil.example.com/reset.css");
+@import url('http://cdn.example.com/normalize.css');
+
+.header {
+  background: url("https://evil.example.com/tracker.png");
+}

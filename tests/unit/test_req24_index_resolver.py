@@ -1,0 +1,295 @@
+"""TA-326..329 + TA-352 — REQ-24 ``IndexConfigResolver``: CLI/env/
+user-config sources merged with per-ecosystem override; env dropped
+under ``--allow-remote-fetch`` (SEC-NEW-62); URLs validated
+HTTPS-only with no userinfo (SEC-NEW-66 parse-time gate).
+
+Plus: TA-352 — ``IndexEndpoint`` reserved fields (``credential_ref``,
+``coordinate_prefix``) exist on the model so the v2 auth + scoping
+layer slots in without breaking changes.
+"""
+from __future__ import annotations
+
+import pytest
+
+from scarno.indexing import (
+    IndexConfigSource,
+    IndexEndpoint,
+    resolve_indexes,
+)
+
+
+# ── TA-326 — CLI parsing + priority ─────────────────────────────────────────
+
+
+class TestCliParsing:
+    @pytest.mark.requirement("FR-256")
+    def test_repeatable_index_records_priority_in_order(self):
+        endpoints, warnings = resolve_indexes(
+            cli_indexes=[
+                "maven=https://nexus.corp/repo",
+                "maven=https://repo1.maven.org/maven2",
+                "npm=https://registry.npmjs.org",
+            ],
+            fetch_enabled=False,
+        )
+        maven = [e for e in endpoints if e.ecosystem == "maven"]
+        assert len(maven) == 2
+        assert [e.priority for e in maven] == [0, 1]
+        assert maven[0].url == "https://nexus.corp/repo"
+        assert maven[1].url == "https://repo1.maven.org/maven2"
+        npm = [e for e in endpoints if e.ecosystem == "npm"]
+        assert len(npm) == 1
+        assert npm[0].priority == 0
+        assert all(e.source is IndexConfigSource.CLI for e in endpoints)
+        assert not warnings
+
+    @pytest.mark.requirement("FR-256")
+    def test_missing_equals_emits_warning_not_failure(self):
+        endpoints, warnings = resolve_indexes(
+            cli_indexes=["malformed-no-equals"],
+            fetch_enabled=False,
+        )
+        assert endpoints == []
+        assert any("missing '='" in w for w in warnings)
+
+    @pytest.mark.requirement("FR-256")
+    @pytest.mark.requirement("SEC-NEW-66")
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "maven=http://insecure",
+            "maven=ftp://insecure",
+            "maven=file:///etc/passwd",
+            "maven=https://user:pass@host/repo",
+            "maven=https://",  # missing host
+            "maven=not-a-url",
+        ],
+    )
+    def test_https_only_and_no_userinfo(self, bad):
+        endpoints, warnings = resolve_indexes(
+            cli_indexes=[bad], fetch_enabled=False,
+        )
+        assert endpoints == []
+        assert any("rejected" in w for w in warnings), warnings
+
+
+# ── TA-327 — env vars + drop-under-fetch ────────────────────────────────────
+
+
+class TestEnvParsing:
+    @pytest.mark.requirement("FR-257")
+    def test_env_var_per_ecosystem_space_separated(self, monkeypatch):
+        monkeypatch.setenv(
+            "SCARNO_INDEX_MAVEN",
+            "https://nexus.corp/repo https://repo1.maven.org/maven2",
+        )
+        monkeypatch.setenv(
+            "SCARNO_INDEX_NPM", "https://registry.npmjs.org"
+        )
+        endpoints, warnings = resolve_indexes(
+            cli_indexes=None, fetch_enabled=False,
+        )
+        maven = [e for e in endpoints if e.ecosystem == "maven"]
+        assert len(maven) == 2
+        assert [e.url for e in maven] == [
+            "https://nexus.corp/repo",
+            "https://repo1.maven.org/maven2",
+        ]
+        assert all(e.source is IndexConfigSource.ENV for e in endpoints)
+        assert not warnings
+
+    @pytest.mark.requirement("SEC-NEW-62")
+    def test_env_dropped_when_fetch_enabled(self, monkeypatch):
+        """The keystone CI-trust control: env-sourced indexes are
+        dropped with a warning when ``--allow-remote-fetch`` is set."""
+        monkeypatch.setenv(
+            "SCARNO_INDEX_MAVEN", "https://attacker.example/repo",
+        )
+        endpoints, warnings = resolve_indexes(
+            cli_indexes=None, fetch_enabled=True,
+        )
+        # No env-sourced endpoint survived.
+        assert all(
+            e.source is not IndexConfigSource.ENV for e in endpoints
+        )
+        # Warning explains why.
+        assert any("dropped because --allow-remote-fetch" in w for w in warnings)
+        assert any("SEC-NEW-62" in w for w in warnings)
+
+    @pytest.mark.requirement("FR-257")
+    def test_env_invalid_url_warned_not_silent(self, monkeypatch):
+        monkeypatch.setenv(
+            "SCARNO_INDEX_MAVEN", "http://insecure not-a-url",
+        )
+        endpoints, warnings = resolve_indexes(
+            cli_indexes=None, fetch_enabled=False,
+        )
+        assert endpoints == []
+        # Two rejection warnings (one per bad URL).
+        assert sum("rejected" in w for w in warnings) == 2
+
+
+# ── TA-328 — user-config TOML via the SOLE locator ─────────────────────────
+
+
+class TestUserConfigParsing:
+    @pytest.mark.requirement("FR-258")
+    def test_user_config_indexes_table(self, tmp_path, monkeypatch):
+        """User-level ``~/.config/scarno/config.toml`` ``[indexes]``
+        table is honoured. The locator is the ARCH-SEC-005 sole helper —
+        already tested directly in TA-325; this test exercises the
+        end-to-end resolver."""
+        fake_home = tmp_path / "fake_home"
+        cfg_dir = fake_home / ".config" / "scarno"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "config.toml").write_text(
+            "[indexes]\n"
+            'maven = ["https://nexus.corp/repo", "https://repo1.maven.org/maven2"]\n'
+            'npm = ["https://registry.npmjs.org"]\n'
+        )
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+        endpoints, warnings = resolve_indexes(
+            cli_indexes=None, fetch_enabled=False,
+        )
+        maven = [e for e in endpoints if e.ecosystem == "maven"]
+        assert [e.url for e in maven] == [
+            "https://nexus.corp/repo",
+            "https://repo1.maven.org/maven2",
+        ]
+        assert all(e.source is IndexConfigSource.USER_CONFIG for e in endpoints)
+        assert not warnings
+
+    @pytest.mark.requirement("FR-258")
+    def test_user_config_malformed_toml_warned_not_failure(
+        self, tmp_path, monkeypatch
+    ):
+        fake_home = tmp_path / "fake_home"
+        cfg_dir = fake_home / ".config" / "scarno"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "config.toml").write_text("[indexes\n  bogus")
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+        endpoints, warnings = resolve_indexes(
+            cli_indexes=None, fetch_enabled=False,
+        )
+        assert endpoints == []
+        assert any("could not be parsed" in w for w in warnings)
+
+
+# ── TA-329 — precedence (CLI > user-config > env) ──────────────────────────
+
+
+class TestPrecedence:
+    @pytest.mark.requirement("FR-259")
+    def test_cli_overrides_user_config_for_same_ecosystem(
+        self, tmp_path, monkeypatch
+    ):
+        # User config has Maven entries.
+        fake_home = tmp_path / "fake_home"
+        cfg_dir = fake_home / ".config" / "scarno"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "config.toml").write_text(
+            "[indexes]\n"
+            'maven = ["https://user-config-maven/repo"]\n'
+        )
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        # CLI has Maven entries — must override entirely (not merge).
+        endpoints, _ = resolve_indexes(
+            cli_indexes=["maven=https://cli-maven/repo"],
+            fetch_enabled=False,
+        )
+        maven = [e for e in endpoints if e.ecosystem == "maven"]
+        assert len(maven) == 1
+        assert maven[0].url == "https://cli-maven/repo"
+        assert maven[0].source is IndexConfigSource.CLI
+
+    @pytest.mark.requirement("FR-259")
+    def test_user_config_overrides_env_for_same_ecosystem(
+        self, tmp_path, monkeypatch
+    ):
+        fake_home = tmp_path / "fake_home"
+        cfg_dir = fake_home / ".config" / "scarno"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "config.toml").write_text(
+            "[indexes]\n"
+            'maven = ["https://user-config-maven/repo"]\n'
+        )
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.setenv(
+            "SCARNO_INDEX_MAVEN", "https://env-maven/repo"
+        )
+        endpoints, _ = resolve_indexes(
+            cli_indexes=None, fetch_enabled=False,
+        )
+        maven = [e for e in endpoints if e.ecosystem == "maven"]
+        assert len(maven) == 1
+        assert maven[0].source is IndexConfigSource.USER_CONFIG
+
+    @pytest.mark.requirement("FR-259")
+    def test_per_ecosystem_override_not_global(
+        self, tmp_path, monkeypatch
+    ):
+        """CLI mentioning ``maven`` doesn't suppress env's ``npm``."""
+        monkeypatch.setenv(
+            "SCARNO_INDEX_NPM", "https://registry.npmjs.org",
+        )
+        endpoints, _ = resolve_indexes(
+            cli_indexes=["maven=https://cli-maven/repo"],
+            fetch_enabled=False,
+        )
+        assert {e.ecosystem for e in endpoints} == {"maven", "npm"}
+        npm = [e for e in endpoints if e.ecosystem == "npm"][0]
+        assert npm.source is IndexConfigSource.ENV
+        maven = [e for e in endpoints if e.ecosystem == "maven"][0]
+        assert maven.source is IndexConfigSource.CLI
+
+
+# ── TA-352 — IndexEndpoint reserved fields ─────────────────────────────────
+
+
+class TestEndpointReservedFields:
+    @pytest.mark.requirement("SEC-NEW-70")
+    def test_credential_ref_reserved_field_exists_and_defaults_none(self):
+        """v1 keeps the field unsettable from CLI/env/config (parsers
+        never populate it) but the model carries it for the v2 auth
+        layer. Verify shape so a v2 PR doesn't have to widen the
+        dataclass and break call sites."""
+        ep = IndexEndpoint(
+            ecosystem="maven",
+            url="https://repo.example/m2",
+            priority=0,
+            source=IndexConfigSource.CLI,
+        )
+        assert ep.credential_ref is None
+        # And the field is settable when a future v2 layer wants to:
+        ep2 = IndexEndpoint(
+            ecosystem="maven",
+            url="https://repo.example/m2",
+            priority=0,
+            source=IndexConfigSource.CLI,
+            credential_ref="corp_nexus_token",
+        )
+        assert ep2.credential_ref == "corp_nexus_token"
+
+    @pytest.mark.requirement("SEC-NEW-70")
+    def test_coordinate_prefix_reserved_field_exists_and_defaults_none(self):
+        ep = IndexEndpoint(
+            ecosystem="maven",
+            url="https://repo.example/m2",
+            priority=0,
+            source=IndexConfigSource.CLI,
+        )
+        assert ep.coordinate_prefix is None
+        ep2 = IndexEndpoint(
+            ecosystem="maven",
+            url="https://nexus.corp/repo",
+            priority=0,
+            source=IndexConfigSource.USER_CONFIG,
+            coordinate_prefix="com.corp.",
+        )
+        assert ep2.coordinate_prefix == "com.corp."

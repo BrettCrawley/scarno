@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- HintPath traverses out of the project root — must be refused
+         by path confinement (SEC-NEW-26 analogue). -->
+    <Reference Include="Evil">
+      <HintPath>..\..\..\outside\evil.dll</HintPath>
+    </Reference>
+    <Reference Include="AlsoEvil">
+      <HintPath>/etc/passwd</HintPath>
+    </Reference>
+    <PackageReference Include="Serilog" Version="3.1.1" />
+  </ItemGroup>
+</Project>
