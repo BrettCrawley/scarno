@@ -5,7 +5,7 @@ description: >-
   (once REQ-10+ lands) JS/TS/CSS, Go, C#. Uploads SARIF to Code
   Scanning, posts a sticky PR-comment checklist, and annotates each
   finding inline in the "Files changed" view.
-author: Scarno contributors
+author: Brett Crawley
 branding:
   icon: scissors
   color: green
