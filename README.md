@@ -708,7 +708,8 @@ slsa-verifier verify-artifact scarno-1.0.4-py3-none-any.whl \
 gh attestation verify scarno-1.0.4-py3-none-any.whl --repo BrettCrawley/scarno
 
 # installed from PyPI instead (PEP 740 attestation)
-python -m pypi_attestations verify pypi --repo BrettCrawley/scarno scarno-1.0.4-*.whl
+uv run --with pypi-attestations python -m pypi_attestations verify pypi \
+  --repository https://github.com/BrettCrawley/scarno scarno-1.0.4-py3-none-any.whl
 ```
 
 The composite action is not covered: it runs from a git ref rather than a signed

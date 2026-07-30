@@ -164,8 +164,18 @@ generate them.
 
 ## 4. Acceptance test
 
-Run all four after the first release cut by this workflow. Until they have
-passed once, the level is claimed by construction, not demonstrated.
+**Passed for 1.0.4 on 2026-07-30.** The SLSA provenance names the generator's
+reusable workflow as the builder
+(`generator_generic_slsa3.yml@refs/tags/v2.1.0`) rather than this repository's
+workflow — that identity is what distinguishes L3 from L2 — binds the build to
+tag `v1.0.4` at commit `1c1ebee`, and its subject digests match both the release
+assets and the files PyPI serves. Rekor log index `2288973250`. PyPI's PEP 740
+attestation records the publisher as GitHub / `BrettCrawley/scarno` /
+`release.yml` / `pypi`, which is the trusted-publisher match, on a
+`github-hosted` runner.
+
+Re-run all four after each release; a release that silently stops producing
+provenance is the failure nobody notices.
 
 ```sh
 VERSION=1.0.4
@@ -185,16 +195,17 @@ gh attestation verify "/tmp/rel/scarno-$VERSION-py3-none-any.whl" \
 curl -sH 'Accept: application/vnd.pypi.simple.v1+json' https://pypi.org/simple/scarno/ \
   | jq -r --arg v "$VERSION" '.files[] | select(.filename|contains($v)) | .provenance'
 
-# 4. …and that attestation verifies
-python -m pypi_attestations verify pypi --repo BrettCrawley/scarno \
+# 4. …and that attestation verifies. Note --repository takes the full URL, and
+#    the command takes ONE file at a time; it also needs outbound access to
+#    tuf-repo-cdn.sigstore.dev to refresh the Sigstore trust root.
+uv run --with pypi-attestations python -m pypi_attestations verify pypi \
+  --repository https://github.com/BrettCrawley/scarno \
   "/tmp/rel/scarno-$VERSION-py3-none-any.whl"
 ```
 
-Check that the provenance names the *generator's* reusable workflow as the
-builder (`generator_generic_slsa3.yml@refs/tags/v2.1.0`) rather than this
-repository's workflow. That identity is exactly what distinguishes L3 from L2;
-if it names `BrettCrawley/scarno/.github/workflows/release.yml`, you are looking
-at the L2 attestation, not the L3 provenance.
+If step 1 reports a builder of `BrettCrawley/scarno/.github/workflows/release.yml`
+you are looking at the L2 attestation, not the L3 provenance — the two live in
+the same release and are easy to confuse.
 
 Note the generator emits an SLSA `v0.2` predicate at v2.1.0. `slsa-verifier`
 handles it; a v1-only parser will not.
@@ -229,7 +240,8 @@ slsa-verifier verify-artifact scarno-1.0.4-py3-none-any.whl \
 gh attestation verify scarno-1.0.4-py3-none-any.whl --repo BrettCrawley/scarno
 
 # Installed from PyPI instead (PEP 740 attestation)
-python -m pypi_attestations verify pypi --repo BrettCrawley/scarno scarno-1.0.4-*.whl
+uv run --with pypi-attestations python -m pypi_attestations verify pypi \
+  --repository https://github.com/BrettCrawley/scarno scarno-1.0.4-py3-none-any.whl
 ```
 
 ---
