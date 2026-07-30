@@ -17,7 +17,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        # v9, SHA-pinned to match release.yml. v3 did not accept
+        # python-version and silently ignored it, so the suite ran on whatever
+        # interpreter the runner happened to ship (3.12.3, as it turned out);
+        # from v9 the pin below is honoured.
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
 
@@ -55,7 +59,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        # v9, SHA-pinned to match release.yml. v3 did not accept
+        # python-version and silently ignored it, so the suite ran on whatever
+        # interpreter the runner happened to ship (3.12.3, as it turned out);
+        # from v9 the pin below is honoured.
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
 
@@ -90,7 +98,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        # v9, SHA-pinned to match release.yml. v3 did not accept
+        # python-version and silently ignored it, so the suite ran on whatever
+        # interpreter the runner happened to ship (3.12.3, as it turned out);
+        # from v9 the pin below is honoured.
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
 
@@ -110,7 +122,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        # v9, SHA-pinned to match release.yml. v3 did not accept
+        # python-version and silently ignored it, so the suite ran on whatever
+        # interpreter the runner happened to ship (3.12.3, as it turned out);
+        # from v9 the pin below is honoured.
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
 
@@ -130,7 +146,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        # v9, SHA-pinned to match release.yml. v3 did not accept
+        # python-version and silently ignored it, so the suite ran on whatever
+        # interpreter the runner happened to ship (3.12.3, as it turned out);
+        # from v9 the pin below is honoured.
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
 
