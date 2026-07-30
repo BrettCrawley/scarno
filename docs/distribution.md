@@ -2,6 +2,13 @@
 
 How to package and distribute Scarno as a PyPI package and a GitHub Action.
 
+> **The PyPI half of this document is background only.** Releasing is now done by
+> [`.github/workflows/release.yml`](../.github/workflows/release.yml) on a `v*`
+> tag — trusted publishing, no API token, SLSA Build L3 provenance. Follow
+> [`releasing.md`](releasing.md); it is the procedure that is kept current. What
+> stays authoritative here is the **GitHub Action Distribution** section below,
+> which the release workflow does not cover.
+
 ## Prerequisites
 
 Both distribution paths require:
@@ -68,54 +75,20 @@ Create an account at https://pypi.org and generate an API token.
 uv run twine upload dist/*
 ```
 
-### 6. Automated publishing via GitHub Actions (recommended)
+### 6. Automated publishing via GitHub Actions — implemented
 
-Create `.github/workflows/publish.yml`:
+This is what [`release.yml`](../.github/workflows/release.yml) does, and it goes
+further than the sketch this section used to carry: the build is separated from
+the upload so the OIDC-privileged job never touches repository source, SLSA
+provenance is generated in a builder the build steps cannot reach, and the upload
+waits on a human approval through the `pypi` environment.
 
-```yaml
-name: Publish to PyPI
+Procedure, one-time PyPI/GitHub setup, and verification:
+[`releasing.md`](releasing.md). What the provenance claims: [`slsa.md`](slsa.md).
 
-on:
-  push:
-    tags: ["v*"]
-
-permissions:
-  contents: read
-
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write  # trusted publishing (no API token needed)
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          python-version: "3.12"
-
-      - name: Build
-        run: uv run python -m build
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-```
-
-To use trusted publishing (no API token), configure the PyPI project at
-https://pypi.org/manage/project/scarno/settings/publishing/ to trust
-your GitHub repository and workflow.
-
-Then to release:
-
-```bash
-# Update version in pyproject.toml, commit, then:
-git tag -a v1.0.0 -m "Scarno 1.0.0"
-git push origin v1.0.0
-```
-
-The workflow builds and publishes automatically on tag push.
+Steps 2–5 above (`build`, `twine`, manual `twine upload`) are the break-glass
+path only — see the appendix of [`releasing.md`](releasing.md), which also notes
+what a hand-built release loses.
 
 ---
 
@@ -127,7 +100,7 @@ at runtime. No Docker image or JavaScript wrapper is needed.
 ### How it works
 
 `action.yml` at the repo root defines the composite action. When a
-consumer workflow calls `uses: yourorg/scarno@v1`, GitHub:
+consumer workflow calls `uses: brettcrawley/scarno@v1.0.4`, GitHub:
 
 1. Checks out the action repo (just `action.yml`)
 2. Runs the composite steps:
@@ -142,20 +115,17 @@ consumer workflow calls `uses: yourorg/scarno@v1`, GitHub:
 action's install step does `pip install scarno`. If the package isn't
 on PyPI yet, the action fails.
 
-### 1. Create the initial release
+### 1. Tagging
 
-After publishing to PyPI:
+The release tag is the action's version — one annotated `vX.Y.Z` tag per release,
+created by the procedure in [`releasing.md`](releasing.md), which also publishes
+to PyPI.
 
-```bash
-# Create an annotated release tag
-git tag -a v1.0.0 -m "Scarno 1.0.0"
-git push origin v1.0.0
-
-# Create the floating major-version tag (convention for Actions)
-# Consumers use @v1 and get the latest v1.x.x automatically
-git tag -fa v1 -m "Scarno v1 (floating)"
-git push origin v1 --force
-```
+**No floating major tag.** The usual Actions convention is a mutable `v1` that
+follows the latest `v1.x.x`, and this project deliberately does not have one: it
+changes what consumers run without them asking, and the action is the part of
+Scarno the SLSA provenance does not cover. The README pins exact version tags
+instead, so they move only when someone edits the README.
 
 ### 2. Consumer usage
 
@@ -169,7 +139,7 @@ permissions:
 steps:
   - uses: actions/checkout@v4
 
-  - uses: yourorg/scarno@v1
+  - uses: brettcrawley/scarno@v1.0.4
     with:
       path: .
       format: sarif
@@ -180,29 +150,10 @@ All inputs are optional and documented in `action.yml`.
 
 ### 3. Updating the action
 
-For patch/minor releases:
-
-```bash
-# Update version in pyproject.toml, commit, push
-# Publish to PyPI (via tag push or manually)
-git tag -a v1.1.0 -m "Scarno 1.1.0"
-git push origin v1.1.0
-
-# Move the floating major tag
-git tag -fa v1 -m "Scarno v1 (floating)"
-git push origin v1 --force
-```
-
-For major releases (breaking changes):
-
-```bash
-git tag -a v2.0.0 -m "Scarno 2.0.0"
-git push origin v2.0.0
-
-# New floating tag
-git tag -fa v2 -m "Scarno v2 (floating)"
-git push origin v2 --force
-```
+Nothing action-specific: the release tag *is* the action version, so
+[`releasing.md`](releasing.md) covers it end to end. The one thing not to forget
+is bumping the `uses:` examples in `README.md` to the tag being released — that
+is what consumers copy, and there is no floating tag doing it for them.
 
 ### 4. GitHub Marketplace (optional)
 
@@ -210,7 +161,8 @@ To list in the Marketplace:
 
 1. Go to the repo's **Releases** page
 2. Create a new release from the `v1.0.0` tag
-3. Check **Publish this action to the GitHub Marketplace**
+3. Check **Publish this action to the GitHub Marketplace** (the release itself
+   is created by the `release` job — see [`releasing.md`](releasing.md))
 4. Fill in the category (Security / Code quality) and description
 
 Requirements: the repo must be **public**, and `action.yml` must have
@@ -227,11 +179,11 @@ Requirements: the repo must be **public**, and `action.yml` must have
 | `README.md` populated | Required | Recommended |
 | `[project.urls]` in `pyproject.toml` | Recommended | - |
 | PyPI account + trusted publishing | Required | - |
-| `build` + `twine` in dev deps | Required | - |
-| Publish workflow (`.github/workflows/publish.yml`) | Recommended | - |
+| `pypi` GitHub environment (`v*` tags, required reviewer) | Required | - |
+| Release workflow (`.github/workflows/release.yml`) | Done | - |
 | Publish to PyPI | Required | **Prerequisite** |
-| Create release tag (`v1.0.0`) | Recommended | Required |
-| Create floating tag (`v1`) | - | Required |
+| Create release tag (`vX.Y.Z`) | Required | Required |
+| README `uses:` examples pinned to that tag | - | Required |
 | Repo is public | - | Required (for external consumers) |
 | Marketplace listing | - | Optional |
 

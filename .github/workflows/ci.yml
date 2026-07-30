@@ -22,7 +22,10 @@ jobs:
           python-version: "3.12"
 
       - name: Sync dependencies
-        run: uv sync --all-extras --dev
+        # --locked: install exactly what uv.lock records and fail if the lockfile
+        # is stale, so every job in every run resolves to the same dependency
+        # set. Refresh with `uv lock` when pyproject.toml changes.
+        run: uv sync --all-extras --dev --locked
 
       - name: Run pytest with coverage
         # Coverage (term + xml + html) is produced unconditionally via
@@ -57,7 +60,10 @@ jobs:
           python-version: "3.12"
 
       - name: Sync dependencies
-        run: uv sync --all-extras --dev
+        # --locked: install exactly what uv.lock records and fail if the lockfile
+        # is stale, so every job in every run resolves to the same dependency
+        # set. Refresh with `uv lock` when pyproject.toml changes.
+        run: uv sync --all-extras --dev --locked
 
       - name: Collect SRTM coverage and fail on gaps
         # Full run (not --collect-only) so the coverage gate measures real
@@ -89,7 +95,10 @@ jobs:
           python-version: "3.12"
 
       - name: Sync dependencies
-        run: uv sync --all-extras --dev
+        # --locked: install exactly what uv.lock records and fail if the lockfile
+        # is stale, so every job in every run resolves to the same dependency
+        # set. Refresh with `uv lock` when pyproject.toml changes.
+        run: uv sync --all-extras --dev --locked
 
       - name: Run mypy
         run: uv run mypy src/scarno
@@ -106,7 +115,10 @@ jobs:
           python-version: "3.12"
 
       - name: Sync dependencies
-        run: uv sync --all-extras --dev
+        # --locked: install exactly what uv.lock records and fail if the lockfile
+        # is stale, so every job in every run resolves to the same dependency
+        # set. Refresh with `uv lock` when pyproject.toml changes.
+        run: uv sync --all-extras --dev --locked
 
       - name: Run bandit
         run: uv run bandit -r src/ -ll
@@ -123,7 +135,10 @@ jobs:
           python-version: "3.12"
 
       - name: Sync dependencies
-        run: uv sync --all-extras --dev
+        # --locked: install exactly what uv.lock records and fail if the lockfile
+        # is stale, so every job in every run resolves to the same dependency
+        # set. Refresh with `uv lock` when pyproject.toml changes.
+        run: uv sync --all-extras --dev --locked
 
       - name: Run pip-audit
         # Audit the installed environment for known CVEs. --skip-editable

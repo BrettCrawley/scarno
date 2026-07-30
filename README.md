@@ -1,6 +1,11 @@
-![Scarno - Cut the dead wood before it catches fire](https://raw.githubusercontent.com/BrettCrawley/scarno/v1.0.3/branding/scarno-logo.png)
+![Scarno - Cut the dead wood before it catches fire](https://raw.githubusercontent.com/BrettCrawley/scarno/v1.0.4/branding/scarno-logo.png)
 
 # Scarno
+
+[![CI](https://github.com/BrettCrawley/scarno/actions/workflows/ci.yml/badge.svg)](https://github.com/BrettCrawley/scarno/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/scarno.svg)](https://pypi.org/project/scarno/)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/BrettCrawley/scarno/blob/main/LICENSE)
+[![SLSA Build Level 3](https://slsa.dev/images/gh-badge-level3.svg)](https://github.com/BrettCrawley/scarno/attestations)
 
 Smart dependency pruner for polyglot projects.
 
@@ -40,6 +45,9 @@ delete something you need.
 - [Advanced usage](#advanced-usage)
 - [Known limitations](#known-limitations)
 - [Development](#development)
+  - [CI gates](#ci-gates)
+  - [Release gates](#release-gates)
+  - [Verifying a release](#verifying-a-release)
 - [Documentation](#documentation)
 - [License](#license)
 
@@ -459,7 +467,7 @@ The text and markdown reports also show a top-of-report banner:
 - **`http://` indexes** — hard rejected. Front your internal HTTP-only Nexus with TLS, or use a tunnel.
 
 For the full operator-awareness section (project fingerprinting, IP
-disclosure, typosquatting, probe-oracle threats), read [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md)
+disclosure, typosquatting, probe-oracle threats), read [`docs/LIMITATIONS.md`](https://github.com/BrettCrawley/scarno/blob/main/docs/LIMITATIONS.md)
 PRV-007 — especially before enabling fetch on a confidential codebase.
 
 ---
@@ -520,7 +528,7 @@ Scanning, posts a sticky PR comment, writes a job summary, and emits inline
 annotations.
 
 ```yaml
-- uses: brettcrawley/scarno@v1
+- uses: brettcrawley/scarno@v1.0.4
   with:
     path: .
     format: sarif
@@ -559,12 +567,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: brettcrawley/scarno@v1
+      - uses: brettcrawley/scarno@v1.0.4
         with:
           fail-on-severity: HIGH
 ```
 
-See [docs/distribution.md](docs/distribution.md) for packaging and release
+See [docs/distribution.md](https://github.com/BrettCrawley/scarno/blob/main/docs/distribution.md) for packaging and release
 details.
 
 ---
@@ -608,7 +616,7 @@ shallow, attribution under ambiguity prefers over-reporting to silence, and some
 ecosystems (C# in particular) lack the metadata sources for definitive
 attribution.
 
-**Read [docs/LIMITATIONS.md](docs/LIMITATIONS.md) before trusting the output for
+**Read [docs/LIMITATIONS.md](https://github.com/BrettCrawley/scarno/blob/main/docs/LIMITATIONS.md) before trusting the output for
 automated removal decisions.** It is an honest, specific list of what Scarno
 does not handle — async/chained return types, generic type parameters,
 last-write-wins variable binding, reflective invocation, CDN-loaded assets, and
@@ -633,24 +641,109 @@ uv run mypy src
 uv run bandit -r src
 ```
 
+### CI gates
+
+[`.github/workflows/ci.yml`](https://github.com/BrettCrawley/scarno/blob/main/.github/workflows/ci.yml)
+runs on every push and pull request:
+
+| Job | What it enforces |
+|---|---|
+| `pytest` | full suite with coverage; the floor is 85% and the build fails below it |
+| `SRTM coverage` | every requirement in the [SRTM](https://github.com/BrettCrawley/scarno/blob/main/docs/scarno-test-suite.md) still has a test — `--srtm-fail-on-gap` |
+| `mypy (strict)` | `mypy --strict` over `src/scarno` |
+| `bandit SAST` | Python SAST on first-party code |
+| `pip-audit CVE scan` | dependency vulnerability audit |
+| `opengrep SAST` | pattern SAST against the pinned ruleset in `.opengrep/rules/` |
+
+Every job installs with `uv sync --locked`, so all six run against the exact
+dependency set recorded in the committed `uv.lock` — and a lockfile left stale
+after a `pyproject.toml` change fails the build rather than silently resolving
+something else. Refresh it with `uv lock` when you change a dependency.
+
+A separate `action-smoke` workflow exercises the composite action in
+[`action.yml`](https://github.com/BrettCrawley/scarno/blob/main/action.yml)
+against a fixture, so the packaging of the action is regression-tested too.
+
+### Release gates
+
+[`.github/workflows/release.yml`](https://github.com/BrettCrawley/scarno/blob/main/.github/workflows/release.yml)
+runs when a `v*` tag is pushed — and on the 1st of each month as an unattended
+rehearsal that builds and attests without publishing, so upstream breakage
+surfaces before a release depends on it.
+
+| Stage | What it does |
+|---|---|
+| `build` | builds sdist + wheel from the tagged tree, **fails if the tag and the packaged version disagree**, `twine check`s the metadata |
+| `provenance` | generates SLSA provenance in an isolated builder the build steps cannot reach (Build L3) |
+| `publish` | uploads to PyPI over OIDC Trusted Publishing — no API token exists in this repository — after a human approves the deployment |
+| `release` | creates the GitHub release with the version's changelog section as the body, and attaches the artefacts plus the provenance |
+
+Publishing runs only after provenance succeeds, so a failure there stops a
+release before the irreversible step. Permissions are split per job: only
+`publish` can mint an OIDC token, only `release` can write to the repository.
+
+Publishing a version to PyPI:
+[`docs/releasing.md`](https://github.com/BrettCrawley/scarno/blob/main/docs/releasing.md).
+
+### Verifying a release
+
+The SLSA badge above is a claim, like every badge — it links to
+[this repository's attestations](https://github.com/BrettCrawley/scarno/attestations),
+which is the evidence. Do not take either on trust; the commands below check the
+artefact you actually downloaded.
+
+Releases carry signed build provenance tying each artefact to the source commit,
+tag, and workflow run that produced it — so a file claiming to be Scarno can be
+checked rather than trusted. From **1.0.4** the provenance is generated by an
+isolated builder (**SLSA Build L3**); 1.0.0 through 1.0.3 were built by hand and
+carry none.
+
+```sh
+# SLSA provenance, attached to the GitHub release (L3)
+slsa-verifier verify-artifact scarno-1.0.4-py3-none-any.whl \
+  --provenance-path multiple.intoto.jsonl \
+  --source-uri github.com/BrettCrawley/scarno --source-tag v1.0.4
+
+# GitHub attestation, for the same artefact
+gh attestation verify scarno-1.0.4-py3-none-any.whl --repo BrettCrawley/scarno
+
+# installed from PyPI instead (PEP 740 attestation)
+python -m pypi_attestations verify pypi --repo BrettCrawley/scarno scarno-1.0.4-*.whl
+```
+
+The composite action is not covered: it runs from a git ref rather than a signed
+artefact. There is deliberately **no floating `@v1` tag** — the examples above
+pin an exact version tag, so an action reference never changes underneath you.
+Pin `brettcrawley/scarno@<commit-sha>` if you want the strongest form of that,
+since a tag can in principle be moved and a commit SHA cannot.
+
+What the claim does and does not cover is in
+[`docs/slsa.md`](https://github.com/BrettCrawley/scarno/blob/main/docs/slsa.md) —
+the Build track says nothing about dependencies or source trustworthiness.
+
 ---
 
 ## Documentation
 
-- [docs/Specification.md](docs/Specification.md) — full product specification
-- [docs/PLAN.md](docs/PLAN.md) — phased development roadmap
-- [docs/LIMITATIONS.md](docs/LIMITATIONS.md) — **what Scarno doesn't handle** (read before relying on output in production)
-- [docs/distribution.md](docs/distribution.md) — PyPI + GitHub Action packaging guide
-- [docs/requirements/](docs/requirements/) — individual requirement documents
-- [docs/scarno-security-architecture.md](docs/scarno-security-architecture.md) — security architecture
-- [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) — threat model (unified STRIDE analysis)
-- [docs/scarno-test-suite.md](docs/scarno-test-suite.md) — test suite design + SRTM
+- [docs/Specification.md](https://github.com/BrettCrawley/scarno/blob/main/docs/Specification.md) — full product specification
+- [docs/PLAN.md](https://github.com/BrettCrawley/scarno/blob/main/docs/PLAN.md) — phased development roadmap
+- [docs/LIMITATIONS.md](https://github.com/BrettCrawley/scarno/blob/main/docs/LIMITATIONS.md) — **what Scarno doesn't handle** (read before relying on output in production)
+- [docs/distribution.md](https://github.com/BrettCrawley/scarno/blob/main/docs/distribution.md) — PyPI + GitHub Action packaging guide
+- [docs/releasing.md](https://github.com/BrettCrawley/scarno/blob/main/docs/releasing.md) — publishing a version to PyPI: one-time trusted-publisher setup, the tag procedure, and what to check afterwards
+- [docs/slsa.md](https://github.com/BrettCrawley/scarno/blob/main/docs/slsa.md) — build provenance: what is claimed, how to verify it, and what it does not cover
+- [docs/requirements/](https://github.com/BrettCrawley/scarno/tree/main/docs/requirements) — individual requirement documents
+- [docs/scarno-security-architecture.md](https://github.com/BrettCrawley/scarno/blob/main/docs/scarno-security-architecture.md) — security architecture
+- [docs/THREAT-MODEL.md](https://github.com/BrettCrawley/scarno/blob/main/docs/THREAT-MODEL.md) — threat model (unified STRIDE analysis)
+- [docs/scarno-test-suite.md](https://github.com/BrettCrawley/scarno/blob/main/docs/scarno-test-suite.md) — test suite design + SRTM
+- [CHANGELOG.md](https://github.com/BrettCrawley/scarno/blob/main/CHANGELOG.md) — what shipped in each version
 
 ---
 
 ## License
 
-[Apache License 2.0](LICENSE) — see also the [NOTICE](NOTICE) file.
+[Apache License 2.0](https://github.com/BrettCrawley/scarno/blob/main/LICENSE) —
+see also the [NOTICE](https://github.com/BrettCrawley/scarno/blob/main/NOTICE)
+file.
 
 Contributions are accepted under the terms of the [Contributor License
-Agreement](CLA.md).
+Agreement](https://github.com/BrettCrawley/scarno/blob/main/CLA.md).

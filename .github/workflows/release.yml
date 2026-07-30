@@ -1,0 +1,193 @@
+name: Release
+
+# Publishes to PyPI when a v* tag is pushed, using PyPI Trusted Publishing
+# (OIDC) — there is no API token anywhere in this repository or its secrets.
+#
+#   build      → build sdist + wheel from the tagged tree, refuse to continue if
+#                the tag and pyproject version disagree
+#   provenance → generate SLSA provenance in a builder this workflow cannot
+#                modify and whose signing key the build steps never see (L3)
+#   publish    → exchange the workflow's OIDC identity for a short-lived PyPI
+#                credential and upload. The only job with id-token: write.
+#   release    → attach the same artefacts to the GitHub release, with the
+#                changelog section as the body. The only job with contents: write.
+#
+# PyPI must be told to trust this workflow first — see docs/releasing.md §0.
+# The publisher is matched on (owner, repository, workflow filename, environment),
+# so renaming this file or the environment breaks publishing until PyPI is updated.
+
+on:
+  push:
+    tags: ["v*"]
+  # Rehearsal: build and generate provenance from the current branch without
+  # publishing anything. Use this to exercise a change to this workflow before
+  # a tag makes its failures expensive.
+  workflow_dispatch:
+  schedule:
+    # 05:23 UTC on the 1st — the same rehearsal, unattended. The release path
+    # depends on slsa-github-generator, whose pinned actions still target the
+    # deprecated Node 20 runtime; when upstream breaks, this tells us on a quiet
+    # morning rather than on the day we want to ship. publish and release are
+    # tag-only, so a scheduled run publishes nothing.
+    - cron: "23 5 1 * *"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      # sha256sum output, base64-encoded — the subject list the SLSA generator signs.
+      hashes: ${{ steps.hash.outputs.hashes }}
+    permissions:
+      contents: read
+      id-token: write # sign the provenance via Sigstore
+      attestations: write # write it to the repository's attestation store
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.12"
+      - name: Check the tag matches the packaged version
+        # A tag/version mismatch would publish a version nobody can trace back to
+        # a tag — and PyPI will not let you take it back. Only meaningful on a
+        # tag; a rehearsal run has no version to compare against.
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(uv run --no-project python -c \
+            'import tomllib,pathlib;print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          echo "tag=$tag pyproject=$version"
+          test "$tag" = "$version"
+      - name: Build
+        run: uv build
+      - name: Check metadata
+        run: uv run --no-project --with twine twine check dist/*
+      - name: Attest build provenance
+        # SLSA Build L2 on its own: signed provenance in GitHub's attestation
+        # store, checkable without trusting this repository. Kept alongside the
+        # L3 provenance below because it is what `gh attestation verify` reads.
+        # Verify with: gh attestation verify <file> --repo BrettCrawley/scarno
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          # Name the distribution types rather than dist/*: uv writes a
+          # dist/.gitignore, which a glob attests as though it were a release
+          # artefact and leaves a puzzling extra subject in the provenance.
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+      - name: Compute subject digests
+        id: hash
+        # Names the distributions explicitly for the same reason the attestation
+        # step does: dist/ also holds a .gitignore, which is not a build output.
+        run: |
+          set -euo pipefail
+          cd dist
+          echo "hashes=$(sha256sum ./*.whl ./*.tar.gz | base64 -w0)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  # SLSA Build L3. The provenance is generated and signed inside this reusable
+  # workflow, whose steps the caller cannot modify and whose signing identity the
+  # build steps above never see — which is the property L2 lacks and L3 requires.
+  #
+  # Pinned to a TAG, deliberately, and this is the one `uses:` in this workflow
+  # that must not be a commit SHA: the generator resolves its own builder binary
+  # from the release at the detected ref, and slsa-verifier derives the expected
+  # builder identity from that tag. A SHA here produces provenance nobody can
+  # verify. Bumping the tag is a reviewed change like any other.
+  provenance:
+    name: slsa provenance
+    needs: [build]
+    permissions:
+      actions: read # read the workflow run that produced the artefacts
+      id-token: write # sign the provenance
+      # contents: write is required even though upload-assets is false below.
+      # GitHub validates a called workflow's *declared* permissions against the
+      # caller's grant when the run starts, and the generator's upload-assets job
+      # declares contents: write — so granting only read fails the whole run
+      # before any job executes ("This run likely failed because of a workflow
+      # file issue"), with no log to explain it.
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.build.outputs.hashes }}
+      # The release job attaches the provenance itself, alongside the
+      # distributions, so nothing here writes to the release.
+      upload-assets: false
+
+  publish:
+    name: publish to PyPI
+    # Provenance first: a provenance failure should stop the release before the
+    # irreversible step, not after it.
+    needs: [build, provenance]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The environment is half of the trusted-publisher match, and it carries the
+    # required reviewer that holds this job until a human approves the upload.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/scarno
+    permissions:
+      id-token: write # mint the OIDC token PyPI exchanges for an upload credential
+    steps:
+      # No checkout: this job only uploads what `build` produced, so the
+      # OIDC-privileged step never touches repository source.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+      - name: Publish
+        # The PyPA action rather than `uv publish`: it generates and uploads
+        # PEP 740 attestations (on by default), which uv does not — uv only
+        # uploads attestation files that already exist. Those attestations are
+        # what lets someone who installed from PyPI, rather than from the GitHub
+        # release, verify where the file came from.
+        #
+        # The trusted-publisher entry on PyPI matches on owner, repository,
+        # workflow filename, and environment — not on which action uploads — so
+        # this needs no PyPI-side change.
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
+
+  release:
+    name: github release
+    needs: [publish, provenance]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the release and attach the artefacts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.provenance.outputs.provenance-name }}
+          path: provenance/
+      - name: Extract this version's changelog section
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" {f=1; next}
+            /^## \[/ {f=0}
+            f' CHANGELOG.md > release-notes.md
+          test -s release-notes.md  # an empty body means the changelog was not updated
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* provenance/* \
+            --title "scarno ${GITHUB_REF_NAME#v}" \
+            --notes-file release-notes.md

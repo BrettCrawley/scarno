@@ -4,6 +4,51 @@ All notable changes to **scarno** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] — 2026-07-30
+
+### Added
+- **Automated, provenance-signed releases.** A `Release` workflow
+  (`.github/workflows/release.yml`) publishes to PyPI when a `v*` tag is pushed:
+  it builds the sdist and wheel from the tagged tree, refuses to continue if the
+  tag and `pyproject.toml` version disagree, `twine check`s the metadata, and
+  uploads over **PyPI Trusted Publishing** (OIDC) — no API token exists in this
+  repository or its secrets. The upload waits on a human approval through the
+  `pypi` environment, and the GitHub release is created afterwards with this
+  changelog's section as its body.
+- **SLSA Build Level 3 provenance.** Every release from this point carries signed
+  provenance generated inside `slsa-github-generator`'s reusable workflow, out of
+  reach of the build steps and their signing identity — attached to the GitHub
+  release as `multiple.intoto.jsonl` and verifiable with `slsa-verifier`.
+  Alongside it: a GitHub attestation (`gh attestation verify`) and a PEP 740
+  attestation on each PyPI file (`python -m pypi_attestations`). Publishing runs
+  only after provenance succeeds, so a provenance failure stops a release before
+  the irreversible step. Releases 1.0.0–1.0.3 were built by hand and carry no
+  provenance; nothing can retroactively attest them.
+- `docs/releasing.md` — the release procedure, the one-time trusted-publisher
+  setup, and what to check after a release.
+- `docs/slsa.md` — what the Build L3 claim covers, how to verify it, and what it
+  explicitly does not cover.
+
+- **`uv.lock` is now committed**, and all six CI jobs install with
+  `uv sync --locked`. Every job in every run therefore resolves to the same
+  dependency set, and a lockfile left stale after a `pyproject.toml` change fails
+  the build instead of quietly resolving something else. Refresh with `uv lock`
+  when changing a dependency. This does not change what a consumer installs — the
+  published wheel still carries the ranges from `pyproject.toml`.
+
+### Changed
+- The composite action is documented as `uses: brettcrawley/scarno@v1.0.4`, an
+  exact version tag. There is deliberately no floating `@v1`: a moving major tag
+  changes what consumers run without them asking, and the action is the part of
+  Scarno that build provenance cannot cover. The README previously showed `@v1`,
+  which never existed as a tag.
+- README: CI, PyPI, licence, and SLSA Build Level 3 badges; a *CI gates* /
+  *Release gates* / *Verifying a release* breakdown under **Development**; and
+  every remaining relative link made absolute so it resolves on the PyPI project
+  page rather than 404ing.
+- `docs/distribution.md`: the PyPI half is now background, pointing at
+  `docs/releasing.md` for the procedure that is kept current.
+
 ## [1.0.3] — 2026-07-24
 
 ### Changed
@@ -62,6 +107,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Path-confined, sandboxed file access; adversarial security test suite.
 - Optional OS-trust-store TLS via `--native-tls`.
 
+[1.0.4]: https://github.com/BrettCrawley/scarno/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/BrettCrawley/scarno/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/BrettCrawley/scarno/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/BrettCrawley/scarno/compare/v1.0.0...v1.0.1
