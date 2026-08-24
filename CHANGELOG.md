@@ -6,6 +6,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- **Analysing an untrusted Maven repository could execute code from it.** Maven
+  reads its launcher configuration from the directory it starts in — a
+  `-javaagent:` in `.mvn/jvm.config` is folded into the JVM command line and runs
+  before any goal, and `.mvn/extensions.xml` and `pom.xml`
+  `<build><extensions>` load code the same way. `mvn` was spawned without an
+  explicit working directory, so it inherited scarno's own: the analysed
+  repository, under both `scarno .` and the composite action. Maven now runs from
+  a private scratch directory, removed on exit, carrying an empty `.mvn` marker
+  so Maven's upward search for a project base directory stops somewhere scarno
+  owns. `safe_subprocess_run` grew an optional `cwd` for this; it defaults to
+  `None`, so `gradle` and `javap` spawn unchanged.
+- **A default run made outbound network calls despite the documented
+  zero-egress contract.** `MavenPomResolver`'s tier-3 fallback spawns
+  `mvn dependency:get`, downloading a POM for coordinates read out of the
+  analysed project's own `pom.xml` — an outbound request driven by untrusted
+  input, landing artefacts in the real `~/.m2` that REQ-24 deliberately
+  quarantines against. It ran unconditionally, because `JavaAnalyser` never
+  forwarded `allow_remote_fetch` to the resolver, so the flag could neither open
+  the tier nor close it. Both README and `REQ-24.md` promise zero network calls
+  without `--allow-remote-fetch`; the acceptance test only counted
+  `SafeHttpsClient` instances, so this tier was invisible to it. The capability
+  is now forwarded and the tier returns before spawning when it is off,
+  degrading exactly as on a cache miss, with one advisory line per run — not per
+  coordinate — so "not found" stays distinguishable from "not allowed".
+
+  **Parent and BOM POMs that previously resolved by downloading will now go
+  unresolved unless `--allow-remote-fetch` is passed.** That is the intended
+  effect, but it is visible in analysis output.
+
+  Both were reported by a Claude Security scan of `a4cc442` as findings F1, F2,
+  F10 and F12 (F1, F10 and F12 being three reports of the same root cause), and
+  the patches were applied unmodified.
+
 ### Fixed
 - **Deleted method overloads were invisible to the cross-version ABI diff.**
   `signature_diff()` matched symbols on `(class, kind, name)` and collapsed
