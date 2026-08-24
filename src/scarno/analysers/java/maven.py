@@ -38,7 +38,13 @@ Parent / BOM POM resolution tiers (FR-131, FR-132, FR-133):
      (SEC-NEW-27 — GAV validated, path confined to repo root).
   3. ``mvn dependency:get`` CLI fallback — downloads the POM into the
      local cache, then re-reads via tier 2 (SEC-NEW-28 — binary
-     resolution confined to ``$MAVEN_HOME``).
+     resolution confined to ``$MAVEN_HOME``). This tier makes an
+     outbound network request for coordinates read out of the
+     analysed project's own ``pom.xml``, so it is gated on the
+     ``--allow-remote-fetch`` capability exactly like the REQ-24
+     fetcher tier — see
+     :meth:`MavenPomResolver._locate_or_fetch_pom`. Without the flag
+     the resolver performs zero network calls.
 
 Each tier degrades gracefully: missing cache → skip; missing ``mvn``
 binary → skip; invalid GAV → skip with error.
@@ -204,6 +210,12 @@ def _fetch_pom_via_maven(
 
     On success the POM lands in ``~/.m2/repository`` and is re-read
     through :func:`_locate_pom_in_local_cache`.
+
+    NETWORK CAPABILITY: this spawns Maven, which resolves the given
+    coordinates against a remote repository. Callers MUST NOT reach
+    it unless the operator passed ``--allow-remote-fetch``; the gate
+    lives in :meth:`MavenPomResolver._locate_or_fetch_pom`, the only
+    production call site.
     """
     if not _validate_gav(coords):
         return None
@@ -475,6 +487,10 @@ class MavenPomResolver(BaseAnalyser):
     fetcher: object = None  # RemoteArtifactFetcher; typed loosely to
     # avoid an import cycle into the indexing package at module load.
     endpoints: list[Any] = []  # list[IndexEndpoint]
+    # Set once per resolver instance the first time the Maven CLI tier
+    # is suppressed, so the "why didn't this POM resolve?" note appears
+    # exactly once instead of per unresolved coordinate.
+    _cli_tier_note_emitted: bool = False
 
     def supports(self, project_path: str) -> bool:
         root = Path(project_path)
@@ -496,13 +512,20 @@ class MavenPomResolver(BaseAnalyser):
            indexes (Option 2 — when ``self.fetcher`` is wired).
         3. ``mvn dependency:get`` CLI fallback
            (:func:`_fetch_pom_via_maven`) — legacy tier, requires mvn
-           on PATH; used only when (1) and (2) miss.
+           on PATH AND ``--allow-remote-fetch``; used only when (1)
+           and (2) miss.
 
         Order matters: (2) is preferred over (3) because it goes through
         ``SafeHttpsClient`` (HTTPS-only, SSRF-guarded, audit-logged) and
         never spawns a subprocess. (3) stays available so installations
         without REQ-24 indexes configured still resolve POMs the way
-        they always did.
+        they always did — but only under the same network capability.
+
+        Both (2) and (3) are network tiers driven by coordinates read
+        out of the analysed project's untrusted ``pom.xml``. Neither
+        may run unless the operator opted in with
+        ``--allow-remote-fetch``: with the flag off, analysis makes
+        zero outbound calls, which is the documented contract.
         """
         # Tier 1.
         cached = _locate_pom_in_local_cache(coords, errors)
@@ -533,8 +556,32 @@ class MavenPomResolver(BaseAnalyser):
                     f"{coords[0]}:{coords[1]}: {exc!s}"
                 )
 
-        # Tier 3 — Maven CLI fallback (existing behaviour).
+        # Tier 3 — Maven CLI fallback, behind the network capability.
+        # ``mvn dependency:get`` is an outbound artefact download for
+        # coordinates that came from the analysed project's pom.xml,
+        # so it needs the same operator opt-in as the REQ-24 tier
+        # above. Without --allow-remote-fetch this returns None and
+        # the caller degrades exactly as it does on a cache miss.
+        if not self.allow_remote_fetch:
+            self._note_cli_tier_disabled(errors)
+            return None
         return _fetch_pom_via_maven(coords, errors)
+
+    def _note_cli_tier_disabled(self, errors: list[str]) -> None:
+        """Record — once per resolver — that the Maven CLI tier was
+        suppressed, so an operator who expected a POM to resolve can
+        tell the difference between "not found" and "not allowed".
+        """
+        if self._cli_tier_note_emitted:
+            return
+        self._cli_tier_note_emitted = True
+        errors.append(
+            "maven-cli-fetch: one or more POMs are missing from "
+            "~/.m2/repository and the 'mvn dependency:get' fallback is "
+            "disabled — it would make outbound network calls for "
+            "coordinates read out of the analysed project. Re-run with "
+            "--deep-inspection --allow-remote-fetch to enable it."
+        )
 
     def analyse(self, project_path: str) -> AnalysisResult:
         root = Path(project_path).resolve(strict=False)

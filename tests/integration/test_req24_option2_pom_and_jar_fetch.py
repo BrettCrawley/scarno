@@ -126,8 +126,8 @@ class TestPomFetchInResolver:
     def test_m2_miss_no_fetcher_falls_through_to_cli(
         self, monkeypatch, tmp_path,
     ):
-        """No fetcher wired → resolver still tries the legacy Maven
-        CLI tier (existing behaviour preserved)."""
+        """No fetcher wired but the network capability granted →
+        resolver still tries the legacy Maven CLI tier."""
         from scarno.analysers.java import maven as mvn_mod
 
         monkeypatch.setattr(
@@ -145,13 +145,92 @@ class TestPomFetchInResolver:
         )
 
         resolver = MavenPomResolver()
-        # No fetcher set.
+        # No fetcher set, but --allow-remote-fetch was passed.
+        resolver.allow_remote_fetch = True
 
         errors: list[str] = []
         resolver._locate_or_fetch_pom(
             ("com.example", "lib", "1.0"), errors,
         )
         assert cli_called == [("com.example", "lib", "1.0")]
+
+    def test_m2_miss_without_capability_never_spawns_cli(
+        self, monkeypatch, tmp_path,
+    ):
+        """Without --allow-remote-fetch, an m2 miss must NOT reach the
+        ``mvn dependency:get`` tier: the coordinates come from the
+        analysed project's own pom.xml, so spawning Maven for them is
+        an outbound call the operator never authorised."""
+        from scarno.analysers.java import maven as mvn_mod
+
+        monkeypatch.setattr(
+            mvn_mod, "_locate_pom_in_local_cache",
+            lambda coords, errors: None,
+        )
+        cli_called: list[tuple[str, ...]] = []
+
+        def _fake_cli(coords, errors):
+            cli_called.append(coords)
+            return None
+
+        monkeypatch.setattr(
+            mvn_mod, "_fetch_pom_via_maven", _fake_cli,
+        )
+
+        resolver = MavenPomResolver()
+        # Default: allow_remote_fetch is False.
+        assert resolver.allow_remote_fetch is False
+
+        errors: list[str] = []
+        result = resolver._locate_or_fetch_pom(
+            ("com.example", "lib", "1.0"), errors,
+        )
+        assert result is None
+        assert cli_called == [], (
+            "mvn dependency:get spawned without --allow-remote-fetch"
+        )
+        assert any("maven-cli-fetch" in e for e in errors)
+
+        # The explanatory note is emitted once, not per coordinate.
+        resolver._locate_or_fetch_pom(
+            ("com.example", "other", "2.0"), errors,
+        )
+        assert sum("maven-cli-fetch" in e for e in errors) == 1
+
+    @pytest.mark.parametrize("capability", [False, True])
+    def test_java_analyser_forwards_capability_to_resolver(
+        self, monkeypatch, tmp_path, capability,
+    ):
+        """JavaAnalyser must propagate --allow-remote-fetch onto the
+        MavenPomResolver it builds, otherwise the tier-3 gate can
+        never open (and, before the gate existed, never closed)."""
+        from scarno.analysers.java import JavaAnalyser
+
+        (tmp_path / "pom.xml").write_text(
+            "<project><modelVersion>4.0.0</modelVersion>"
+            "<groupId>com.example</groupId>"
+            "<artifactId>app</artifactId>"
+            "<version>1.0</version></project>"
+        )
+        seen: list[bool] = []
+        real_analyse = MavenPomResolver.analyse
+
+        def _spy(self, project_path):
+            seen.append(self.allow_remote_fetch)
+            return real_analyse(self, project_path)
+
+        monkeypatch.setattr(MavenPomResolver, "analyse", _spy)
+        # Keep the test hermetic: index resolution reads the operator's
+        # env / config and is irrelevant to the forwarding assertion.
+        monkeypatch.setattr(
+            JavaAnalyser, "_maybe_build_fetcher",
+            lambda self, root, errors, findings: (None, []),
+        )
+
+        analyser = JavaAnalyser()
+        analyser.allow_remote_fetch = capability
+        analyser.analyse(str(tmp_path))
+        assert seen == [capability]
 
     def test_invalid_coord_emits_audit_not_crash(
         self, monkeypatch, tmp_path,

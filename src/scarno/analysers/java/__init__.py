@@ -125,6 +125,11 @@ class JavaAnalyser(BaseAnalyser):
             # configured indexes (cache-first, audit-logged).
             mvn.fetcher = fetcher
             mvn.endpoints = endpoints
+            # The resolver's legacy ``mvn dependency:get`` tier is an
+            # outbound fetch too, so it needs the same operator opt-in
+            # as the fetcher above. Forward the capability rather than
+            # leaving the resolver on its BaseAnalyser default (False).
+            mvn.allow_remote_fetch = self.allow_remote_fetch
             mvn_result = mvn.analyse(str(root))
             dependencies.extend(mvn_result.dependencies)
             errors.extend(mvn_result.errors)
