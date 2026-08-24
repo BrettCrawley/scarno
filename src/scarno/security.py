@@ -141,6 +141,7 @@ def safe_subprocess_run(
     *,
     timeout_s: float,
     binary_root: Path | str | None = None,
+    cwd: Path | str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a subprocess with Scarno's mandatory hardening.
 
@@ -149,6 +150,14 @@ def safe_subprocess_run(
     ``binary_root`` is supplied, the resolved ``argv[0]`` MUST sit
     inside that tree or :class:`BinaryNotConfinedError` is raised
     BEFORE spawning.
+
+    ``cwd`` is the child's working directory; ``None`` (the default)
+    inherits Scarno's own. Any caller spawning a tool that reads
+    launcher / project configuration from its working directory (build
+    tools such as ``mvn`` or ``gradle``) MUST pass an explicit neutral
+    directory — the analysed tree is attacker-controlled input, and
+    inheriting it turns repo content (``.mvn/jvm.config``,
+    ``.mvn/extensions.xml``, ``pom.xml`` extensions) into executed code.
 
     Returns the :class:`subprocess.CompletedProcess`. Callers are
     responsible for inspecting returncode / stdout / stderr and
@@ -175,6 +184,7 @@ def safe_subprocess_run(
         shell=False,
         check=False,
         text=True,
+        cwd=cwd,
     )
 
 

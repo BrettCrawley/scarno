@@ -56,7 +56,10 @@ import re
 import shutil
 import subprocess  # noqa: S404 — wrapped with strict argv validation
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -1190,6 +1193,33 @@ def _warn_path_fallback_once(binary_name: str) -> None:
     )
 
 
+@contextmanager
+def _neutral_mvn_working_dir() -> Iterator[str]:
+    """Yield a private, empty scratch directory to spawn ``mvn`` from.
+
+    Maven's launcher reads its configuration from the directory it is
+    started in — ``.mvn/jvm.config`` (folded into the JVM command line,
+    so ``-javaagent:`` there executes attacker code before any goal
+    runs), ``.mvn/maven.config``, ``.mvn/extensions.xml``, and the
+    local ``pom.xml`` (``<build><extensions>`` + ``<repositories>``).
+    The analysed project is untrusted input, so inheriting Scarno's own
+    working directory — which is the analysed repository for ``scarno .``
+    and for the GitHub Action — would hand that repository code
+    execution as the scanning user.
+
+    The scratch directory also holds an empty ``.mvn`` marker: Maven
+    resolves its project base directory by walking *up* from the
+    working directory to the nearest ancestor containing ``.mvn``, and
+    the marker stops that walk inside a directory we own rather than
+    letting it reach one we do not control.
+
+    The directory is removed when the context exits.
+    """
+    with tempfile.TemporaryDirectory(prefix="scarno-mvn-") as scratch:
+        (Path(scratch) / ".mvn").mkdir()
+        yield scratch
+
+
 def _invoke_mvn_safe(
     argv_tail: list[str], *, timeout_s: float = _MVN_TIMEOUT_SEC
 ) -> "subprocess.CompletedProcess[str] | None":
@@ -1200,6 +1230,10 @@ def _invoke_mvn_safe(
     profile names, arbitrary ``-D`` system properties) are rejected
     before spawn. Returns the :class:`subprocess.CompletedProcess` or
     ``None`` on binary-missing / timeout / OS error.
+
+    ``mvn`` is always spawned from a private scratch directory, never
+    from Scarno's own working directory — see
+    :func:`_neutral_mvn_working_dir`.
     """
     for tok in argv_tail:
         if not any(
@@ -1225,11 +1259,13 @@ def _invoke_mvn_safe(
             BinaryNotConfinedError,
             safe_subprocess_run,
         )
-        return safe_subprocess_run(
-            [mvn, *argv_tail],
-            timeout_s=timeout_s,
-            binary_root=binary_root,
-        )
+        with _neutral_mvn_working_dir() as scratch_dir:
+            return safe_subprocess_run(
+                [mvn, *argv_tail],
+                timeout_s=timeout_s,
+                binary_root=binary_root,
+                cwd=scratch_dir,
+            )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None
     except BinaryNotConfinedError:

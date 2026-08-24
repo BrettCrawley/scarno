@@ -33,7 +33,7 @@ def test_invoke_mvn_safe_uses_fixed_argv_no_project_flags(monkeypatch):
 
     captured_argvs: list[list[str]] = []
 
-    def _capturing_run(argv, *, timeout_s, binary_root=None):
+    def _capturing_run(argv, *, timeout_s, binary_root=None, cwd=None):
         captured_argvs.append(list(argv))
         # Return a CompletedProcess-like stub.
         import subprocess
