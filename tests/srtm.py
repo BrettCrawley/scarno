@@ -390,6 +390,10 @@ FUNCTIONAL_REQUIREMENTS: frozenset[str] = frozenset(
         "FR-267",  # provenance="remote" not escalated by --fail-on-severity by default; --fail-on-remote-severity opt-in
         # REQ-3 — Python entry-point enumeration (PEP 562 lazy loading)
         "FR-271",  # Module-level __getattr__ (PEP 562): surface used lazy symbols; diagnose unenumerable unused surface
+        # REQ-22 — overload-aware ABI diff (SCARNO-BUG-signature-diff)
+        "FR-272",  # signature_diff matches at descriptor granularity; a deleted overload of a surviving member is reported
+        "FR-273",  # signature_diff output is invariant under PYTHONHASHSEED
+        "FR-274",  # ABI findings name the overload (descriptor in message) and sort totally
         # COMP-005 — REQ-24 GDPR compliance touchpoint (consent gate + disclosure)
         "COMP-005",  # GDPR — operator IP disclosure to index hosts; consent via --allow-remote-fetch + PUC-006/008
     }

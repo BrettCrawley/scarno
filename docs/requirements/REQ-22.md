@@ -134,6 +134,41 @@ do:
             emit Finding(severity=MEDIUM, ...)
 ```
 
+#### 2a. Diff matching granularity (FR-272)
+
+Symbols match on **identity first, descriptor second**. Identity is
+`(fqcn, member_kind, member_name)`; within one identity in one
+version, `descriptor` is unique (Java forbids two overloads sharing a
+parameter list, and `javap` renders the parameter list only), so
+`(identity, descriptor)` is a sound full key.
+
+For an identity present on both sides, let `gone` be the declared
+descriptors absent from the resolved side, `new` the resolved
+descriptors absent from the declared side, and `shifted` the
+descriptors present on both whose `modifiers` differ:
+
+| Case | Bucket |
+|---|---|
+| identity only in declared | all its signatures → REMOVED |
+| identity only in resolved | all its signatures → ADDED |
+| member not overloaded on either side, its one descriptor differs | resolved-side signature → CHANGED |
+| otherwise, each of `gone` | REMOVED |
+| otherwise, each of `new` | ADDED |
+| each of `shifted` | resolved-side signature → CHANGED |
+
+The not-overloaded case is the "retyped parameter" reading that keeps
+a lone signature change out of REMOVED + ADDED. Once a member is
+overloaded, pairing a deleted descriptor with an unrelated added one
+is a guess, and it would report the surviving signature rather than
+the one the caller compiled against. Every other deleted descriptor
+is a symbol the JVM can no longer resolve — a `NoSuchMethodError` —
+and must reach REMOVED even when sibling overloads survive.
+
+Collapsing an identity to a single representative signature (the
+pre-fix behaviour) made deleted overloads invisible to
+`TS-ABI-RUNTIME-RISK` and made CHANGED depend on set-iteration order.
+See `docs/SCARNO-BUG-signature-diff.md`.
+
 ### 3. Signature extraction (`javap`)
 
 We invoke `javap -public -c <jar>` ONLY for jars within
@@ -425,6 +460,9 @@ Tests: tests/integration/test_req22_compliance_signal.py.
 | FR-234 | Source call-set cross-reference produces RUNTIME_RISK Findings | `tests/unit/test_req22_runtime_risk.py` |
 | FR-235 | Markdown / JSON / SARIF reporting integration | `tests/unit/test_req22_reporters.py` |
 | FR-236 | "JAR not cached" graceful skip with note | `tests/unit/test_req22_missing_jar.py` |
+| FR-272 | signature_diff matches at descriptor granularity; a deleted overload of a surviving member is reported | `tests/unit/test_req22_diff.py` |
+| FR-273 | signature_diff output is invariant under PYTHONHASHSEED | `tests/unit/test_req22_diff_determinism.py` |
+| FR-274 | ABI findings name the overload (descriptor in message) and sort totally | `tests/unit/test_req22_finding_sort.py` |
 | SEC-NEW-42 | _JAVAP_PER_JAR_TIMEOUT_S = 30s enforced | `tests/security/test_req22_timeout.py` |
 | SEC-NEW-43 | _JAVAP_MAX_JARS_PER_RUN = 128 enforced | `tests/security/test_req22_jar_cap.py` |
 | SEC-NEW-44 | resolve_and_confine + _validate_gav on m2 path construction | `tests/security/test_req22_traversal.py` |

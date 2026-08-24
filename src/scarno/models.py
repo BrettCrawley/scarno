@@ -181,9 +181,12 @@ class JavaSignature:
 
     Frozen + hashable so cross-version diffing reduces to set
     operations on (fqcn, member_kind, member_name, descriptor) tuples.
-    Modifiers are tracked separately because they shouldn't affect
-    "is this the same symbol" identity but DO contribute to the
-    signature_diff CHANGED set when modifiers shift.
+    ``descriptor`` is part of that key: overloads share the other
+    three fields, so matching on member identity alone loses every
+    deleted overload of a member that survives under a different
+    parameter list (FR-272). Modifiers are tracked separately because
+    they shouldn't affect "is this the same symbol" identity but DO
+    contribute to the signature_diff CHANGED set when modifiers shift.
     """
 
     fqcn: str

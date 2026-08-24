@@ -188,10 +188,53 @@ class AbiDiffResult:
 
 
 def _identity(sig: JavaSignature) -> tuple[str, str, str]:
-    """Identity key for "is this the same symbol" matching: ignores
-    descriptor + modifiers so a method with a changed signature shows
-    up as ``changed`` rather than as ``removed + added``."""
+    """Identity key for "is this the same member" matching: ignores
+    descriptor + modifiers, so the sole overload of a method with a
+    retyped parameter shows up as ``changed`` rather than as
+    ``removed + added``.
+
+    Identity is the FIRST of two matching levels — overloads share it,
+    so it can never be the whole story. :func:`signature_diff` matches
+    on ``descriptor`` WITHIN an identity (FR-272); collapsing an
+    identity to one representative signature hides deleted overloads
+    and makes the result depend on set-iteration order. See
+    ``docs/SCARNO-BUG-signature-diff.md``.
+    """
     return (sig.fqcn, sig.member_kind, sig.member_name)
+
+
+def _signature_sort_key(
+    sig: JavaSignature,
+) -> tuple[str, str, str, str, tuple[str, ...]]:
+    """Total, hash-independent ordering over signatures — used to emit
+    findings in a fixed order regardless of set-iteration order."""
+    return (
+        sig.fqcn,
+        sig.member_kind,
+        sig.member_name,
+        sig.descriptor,
+        tuple(sorted(sig.modifiers)),
+    )
+
+
+def _group_by_identity(
+    signatures: set[JavaSignature],
+) -> dict[tuple[str, str, str], dict[str, set[JavaSignature]]]:
+    """``{identity: {descriptor: {signature, ...}}}``.
+
+    The innermost value is a SET, not a single signature: within one
+    identity a descriptor is unique in well-formed ``javap`` output
+    (Java forbids two overloads sharing a parameter list), but a class
+    header the parser failed to recognise can leave two members under
+    the placeholder FQCN. Keeping the set means such a collision is
+    handled by comparing everything, never by picking a winner.
+    """
+    grouped: dict[tuple[str, str, str], dict[str, set[JavaSignature]]] = {}
+    for sig in signatures:
+        grouped.setdefault(_identity(sig), {}).setdefault(
+            sig.descriptor, set()
+        ).add(sig)
+    return grouped
 
 
 def signature_diff(
@@ -201,34 +244,68 @@ def signature_diff(
 ) -> AbiDiffResult:
     """Compute ADDED / REMOVED / CHANGED between two signature sets.
 
-    A symbol is CHANGED when its identity (fqcn + kind + name) appears
-    in both sides but the descriptor or modifiers differ. Otherwise
-    it's pure-added or pure-removed.
+    Matching is identity-first, descriptor-second (FR-272). For an
+    identity present on both sides, with ``gone`` the declared
+    descriptors absent from the resolved side and ``new`` the resolved
+    descriptors absent from the declared side:
+
+    * the member is not overloaded on either side and its one
+      descriptor differs — the FR-233 "retyped parameter" case:
+      CHANGED, reported on the resolved side;
+    * otherwise every ``gone`` descriptor is REMOVED (a symbol the JVM
+      can no longer resolve — ``NoSuchMethodError`` — even when
+      sibling overloads survive) and every ``new`` one is ADDED. Once
+      a member IS overloaded, pairing a deletion with an unrelated
+      addition is a guess; the deletion is a fact, and REMOVED is the
+      bucket that names the descriptor the caller compiled against;
+    * a descriptor on both sides whose modifiers shifted is CHANGED.
+
+    The result is a pure function of the two input sets: no
+    representative signature is selected anywhere, so the output does
+    not vary with ``PYTHONHASHSEED`` (FR-273).
     """
-    declared_by_id: dict[tuple[str, str, str], JavaSignature] = {
-        _identity(s): s for s in declared
-    }
-    resolved_by_id: dict[tuple[str, str, str], JavaSignature] = {
-        _identity(s): s for s in resolved
-    }
+    declared_by_id = _group_by_identity(declared)
+    resolved_by_id = _group_by_identity(resolved)
     declared_ids = set(declared_by_id)
     resolved_ids = set(resolved_by_id)
-    added = frozenset(
-        resolved_by_id[i] for i in (resolved_ids - declared_ids)
-    )
-    removed = frozenset(
-        declared_by_id[i] for i in (declared_ids - resolved_ids)
-    )
+
+    added: set[JavaSignature] = set()
+    removed: set[JavaSignature] = set()
     changed: set[JavaSignature] = set()
+
+    for i in resolved_ids - declared_ids:
+        for sigs in resolved_by_id[i].values():
+            added |= sigs
+    for i in declared_ids - resolved_ids:
+        for sigs in declared_by_id[i].values():
+            removed |= sigs
+
     for i in declared_ids & resolved_ids:
-        d = declared_by_id[i]
-        r = resolved_by_id[i]
-        if d.descriptor != r.descriptor or d.modifiers != r.modifiers:
-            # Report the resolved-side signature — that's what's on the
+        d_map = declared_by_id[i]
+        r_map = resolved_by_id[i]
+        gone = set(d_map) - set(r_map)
+        new = set(r_map) - set(d_map)
+        if len(d_map) == 1 and len(r_map) == 1 and gone and new:
+            # The member is NOT overloaded on either side and its one
+            # descriptor differs: the FR-233 retyped-parameter case.
+            # Report the resolved side — that's what's on the
             # classpath today.
-            changed.add(r)
+            changed |= r_map[next(iter(new))]
+        else:
+            for desc in gone:
+                removed |= d_map[desc]
+            for desc in new:
+                added |= r_map[desc]
+        for desc in set(d_map) & set(r_map):
+            d_mods = {s.modifiers for s in d_map[desc]}
+            r_mods = {s.modifiers for s in r_map[desc]}
+            if d_mods != r_mods:
+                changed |= r_map[desc]
+
     return AbiDiffResult(
-        added=added, removed=removed, changed=frozenset(changed),
+        added=frozenset(added),
+        removed=frozenset(removed),
+        changed=frozenset(changed),
     )
 
 
@@ -243,9 +320,18 @@ _SEVERITY_ORDER: dict[FindingSeverity, int] = {
 }
 
 
-def _finding_sort_key(f: Finding) -> tuple[int, str, str, str, int, str, str]:
+def _finding_sort_key(
+    f: Finding,
+) -> tuple[int, str, str, str, int, str, str, str, str]:
     """Stable sort key — severity DESC, then identity-bearing fields ASC
-    for byte-identical output across runs of the same fixture."""
+    for byte-identical output across runs of the same fixture.
+
+    Every ABI finding carries ``file_path=""`` and ``line=0``, so
+    ``message`` does nearly all the discriminating here — which is why
+    it must name the overload (FR-274). ``remediation`` and
+    ``provenance`` follow as tiebreaks so the key stays total for two
+    findings that differ only in those.
+    """
     return (
         _SEVERITY_ORDER.get(f.severity, 99),
         f.kind.value,
@@ -254,6 +340,8 @@ def _finding_sort_key(f: Finding) -> tuple[int, str, str, str, int, str, str]:
         f.line,
         f.rule_id,
         f.message,
+        f.remediation,
+        f.provenance,
     )
 
 
@@ -537,17 +625,27 @@ class CrossVersionAbiDiffer:
         :class:`Finding`. Callers pass ``"remote"`` when either side of
         the underlying comparison was sourced from the REQ-24
         quarantined cache.
+
+        Messages name the OVERLOAD, not just the member (FR-274):
+        ``signature_diff`` reports per-descriptor, so two overloads of
+        one member reach this method together and a descriptor-less
+        message would render them as two identical lines that
+        :func:`_finding_sort_key` cannot order.
         """
         out: list[Finding] = []
-        risk_classes = {
-            ("REMOVED", s) for s in diff.removed
-        } | {
-            ("CHANGED", s) for s in diff.changed
-        } | {
-            ("ADDED", s) for s in diff.added
-        }
+        risk_classes = [
+            *(("REMOVED", s) for s in sorted(diff.removed, key=_signature_sort_key)),
+            *(("CHANGED", s) for s in sorted(diff.changed, key=_signature_sort_key)),
+            *(("ADDED", s) for s in sorted(diff.added, key=_signature_sort_key)),
+        ]
         for action, sig in risk_classes:
             symbol_id = f"{sig.fqcn}.{sig.member_name}"
+            # Fields carry a type descriptor, members a parameter list.
+            symbol_display = (
+                f"{sig.descriptor} {symbol_id}"
+                if sig.member_kind == "field"
+                else f"{symbol_id}{sig.descriptor}"
+            )
             is_called = any(
                 symbol_id == ref or ref.endswith("." + sig.member_name)
                 for ref in source_symbols
@@ -562,8 +660,8 @@ class CrossVersionAbiDiffer:
                         line=0,
                         snippet="",
                         message=(
-                            f"{sanitise(symbol_id)} called by your source, "
-                            f"exists in declared "
+                            f"{sanitise(symbol_display)} called by your "
+                            f"source, exists in declared "
                             f"{sanitise(declared_version)} but "
                             f"REMOVED in resolved "
                             f"{sanitise(resolved_version)}."
@@ -587,8 +685,8 @@ class CrossVersionAbiDiffer:
                         line=0,
                         snippet="",
                         message=(
-                            f"{sanitise(symbol_id)} called by your source; "
-                            f"signature CHANGED between declared "
+                            f"{sanitise(symbol_display)} called by your "
+                            f"source; signature CHANGED between declared "
                             f"{sanitise(declared_version)} and resolved "
                             f"{sanitise(resolved_version)}."
                         ),
@@ -610,7 +708,7 @@ class CrossVersionAbiDiffer:
                         line=0,
                         snippet="",
                         message=(
-                            f"{sanitise(symbol_id)} {action} between "
+                            f"{sanitise(symbol_display)} {action} between "
                             f"declared {sanitise(declared_version)} and "
                             f"resolved {sanitise(resolved_version)}."
                         ),

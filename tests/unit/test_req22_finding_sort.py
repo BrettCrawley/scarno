@@ -1,8 +1,89 @@
 """PR-4 red tests — R-Phase9-01: deterministic finding sort
-(TA-285 + TA-286)."""
+(TA-285 + TA-286).
+
+Extended for FR-274 (TA-365 + TA-366). Once ``signature_diff`` reports
+per-overload, two overloads of one member reach ``_emit_findings``
+together; if the message omits the descriptor they produce identical
+``_finding_sort_key`` values and ``list.sort`` falls back to input
+order — which is set-iteration order. R-Phase9-01 then holds only by
+accident. See ``docs/SCARNO-BUG-signature-diff.md``.
+"""
 from __future__ import annotations
 
 import pytest
+
+
+def _differ(tmp_path):
+    from scarno.analysers.java.abi_diff import CrossVersionAbiDiffer
+
+    return CrossVersionAbiDiffer(
+        m2_root=tmp_path, invoke_javap=lambda jar, cls: None,
+    )
+
+
+def _overload_diff():
+    """Two deleted overloads of one member, plus a third that is only
+    a modifier shift — the shapes that collide on message text."""
+    from scarno.analysers.java.abi_diff import AbiDiffResult
+    from scarno.models import JavaSignature
+
+    def sig(descriptor: str) -> JavaSignature:
+        return JavaSignature(
+            fqcn="org.eclipse.jetty.util.URIUtil",
+            member_kind="method",
+            member_name="encodePath",
+            descriptor=descriptor,
+            modifiers=frozenset({"public", "static"}),
+        )
+
+    return AbiDiffResult(
+        added=frozenset(),
+        removed=frozenset({
+            sig("(java.lang.StringBuilder, java.lang.String)"),
+            sig("(java.lang.String, int, int)"),
+        }),
+        changed=frozenset(),
+    )
+
+
+@pytest.mark.requirement("FR-274")
+def test_findings_name_the_overload(tmp_path):
+    """TA-365 — each Finding carries its own descriptor, so a reader
+    can tell which overload vanished and the two are distinguishable
+    in SARIF."""
+    findings = _differ(tmp_path)._emit_findings(
+        coord="org.eclipse.jetty:jetty-util",
+        declared_version="9.4.51.v20230217",
+        resolved_version="12.0.22",
+        diff=_overload_diff(),
+        source_symbols={"org.eclipse.jetty.util.URIUtil.encodePath"},
+    )
+    assert len(findings) == 2
+    messages = [f.message for f in findings]
+    assert len(set(messages)) == 2, f"messages collide: {messages}"
+    assert any("java.lang.StringBuilder" in m for m in messages)
+    assert any("(java.lang.String, int, int)" in m for m in messages)
+
+
+@pytest.mark.requirement("FR-274")
+def test_finding_sort_total_for_overloads(tmp_path):
+    """TA-366 — the sort key discriminates between overloads of one
+    member, so ordering does not depend on input order."""
+    from scarno.analysers.java.abi_diff import _finding_sort_key
+
+    findings = _differ(tmp_path)._emit_findings(
+        coord="org.eclipse.jetty:jetty-util",
+        declared_version="9.4.51.v20230217",
+        resolved_version="12.0.22",
+        diff=_overload_diff(),
+        source_symbols={"org.eclipse.jetty.util.URIUtil.encodePath"},
+    )
+    keys = [_finding_sort_key(f) for f in findings]
+    assert len(set(keys)) == len(keys), "sort key is not total"
+    reordered = list(reversed(findings))
+    forward = sorted(findings, key=_finding_sort_key)
+    backward = sorted(reordered, key=_finding_sort_key)
+    assert [f.message for f in forward] == [f.message for f in backward]
 
 
 @pytest.mark.requirement("FR-234")

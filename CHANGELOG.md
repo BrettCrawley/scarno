@@ -4,6 +4,35 @@ All notable changes to **scarno** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Deleted method overloads were invisible to the cross-version ABI diff.**
+  `signature_diff()` matched symbols on `(class, kind, name)` and collapsed
+  each match to a single arbitrary signature, so a deleted overload of a
+  member that survived under a different parameter list produced no finding at
+  all. `URIUtil.encodePath(StringBuilder, String)`, removed between jetty-util
+  9.4.51 and 12.0.22, is a `NoSuchMethodError` at any call site compiled
+  against it and was reported by nothing — on one measured jar pair, 20 of 20
+  such deletions were missed. The diff now matches on the full descriptor
+  within a member, so `TS-ABI-RUNTIME-RISK` sees per-overload deletions.
+  **Expect more findings after upgrading on dependencies with overloaded APIs**
+  — roughly a quarter of the public surface of the sample jar is overloaded.
+  A build that passed `--fail-on-severity` on one of these false negatives will
+  now fail; that is the fix working, not a regression.
+- **ABI diff output varied between identical runs.** Which signature won the
+  collapse above depended on per-process string hash randomisation, so the
+  `changed` count moved run to run (50–58 across `PYTHONHASHSEED` values on one
+  jar pair) and SARIF results appeared and disappeared between otherwise
+  identical CI runs. The diff is now a pure function of its inputs. Findings
+  also name the overload — `Cls.method(java.lang.String)` rather than
+  `Cls.method` — which both tells you which signature went and keeps the
+  R-Phase9-01 finding sort total now that one member can yield several
+  findings.
+
+  Reported in `docs/SCARNO-BUG-signature-diff.md`; covered by FR-272 / FR-273 /
+  FR-274.
+
 ## [1.0.4] — 2026-07-30
 
 ### Added

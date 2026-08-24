@@ -303,6 +303,25 @@ Lands: `--deep-inspection` CLI flag, `analysers/java/abi_diff.py` (with `CrossVe
 | TA-270 | `test_runtime_risk_finding_for_source_referenced_removed_method` | `tests/unit/test_req22_runtime_risk.py` | `REQ_22` + `FR-234` + COMP-004 | helper 1.2.0 has `utilityMethod`; helper 1.5.0 (resolved) does not; source calls it. | Exactly one `Finding(severity=HIGH, kind=ABI_RUNTIME_RISK)` referencing the call site, symbol, declared 1.2.0, resolved 1.5.0. |
 | TA-271 | `test_abi_drift_finding_for_unreferenced_change` | same | `REQ_22` + `FR-234` | Same fixture but symbol NOT in source call set. | `Finding(severity=MEDIUM, kind=ABI_DRIFT)`. |
 
+### Overload-aware diff (`docs/SCARNO-BUG-signature-diff.md`)
+
+Post-1.0.4 defect: `signature_diff` collapsed each identity to one
+arbitrary overload, so deleted overloads of a surviving member were
+invisible to `TS-ABI-RUNTIME-RISK` and `changed` varied by hash seed.
+
+| TA | Test | File | Marker | Scenario | Expected |
+|---|---|---|---|---|---|
+| TA-357 | `test_deleted_overload_of_surviving_member_is_removed` | `tests/unit/test_req22_diff.py` | `REQ_22` + `FR-272` | `foo(String)` + `foo(int)` → `foo(int)`. | `foo(String)` in `removed`; surviving `foo(int)` in none of the three sets. |
+| TA-358 | `test_added_overload_is_added_not_removed` | same | `REQ_22` + `FR-272` | `foo(int)` → `foo(int)` + `foo(String)`. | Exactly one entry in `added`; `removed` and `changed` empty (no over-reporting). |
+| TA-359 | `test_sole_overload_retype_is_changed` | same | `REQ_22` + `FR-272` + `FR-233` | Single overload `(I)V` → `(II)V`, member not overloaded on either side. | Resolved-side sig in `changed`; `removed` / `added` empty. |
+| TA-360 | `test_modifier_only_shift_is_changed` | same | `REQ_22` + `FR-272` | Same descriptor, `modifiers` gains `static`. | Resolved-side sig in `changed`. |
+| TA-361 | `test_field_and_constructor_identities_round_trip` | same | `REQ_22` + `FR-272` | Field removed; one of two constructor overloads removed. | Field in `removed`; deleted constructor overload in `removed`. |
+| TA-362 | `test_uriutil_encodepath_regression` | same | `REQ_22` + `FR-272` | The bug report's witness: `encodePath(StringBuilder, String)` deleted, `encodePath(String)` survives. | Deleted overload reported; named regression guard. |
+| TA-363 | `test_overload_heavy_diff_exact_sets` | `tests/unit/test_req22_diff_determinism.py` | `REQ_22` + `FR-273` | Overload-heavy fixture; assert the three sets exactly. | Output is a pure function of the inputs — no representative selection. |
+| TA-364 | `test_signature_diff_invariant_under_hash_seed` | same | `REQ_22` + `FR-273` | Re-run the diff in child interpreters under `PYTHONHASHSEED` ∈ {0,1,2,3,42} (the bug report's reproduction). | Canonical serialisation of `added` / `removed` / `changed` identical across every seed. |
+| TA-365 | `test_findings_name_the_overload` | `tests/unit/test_req22_finding_sort.py` | `REQ_22` + `FR-274` | Two removed overloads of one member. | Two Findings; each message carries its own descriptor. |
+| TA-366 | `test_finding_sort_total_for_overloads` | same | `REQ_22` + `FR-274` | Shuffled Finding list from overloads of one member. | `_finding_sort_key` orders them identically regardless of input order. |
+
 ### M2 cache reads (SEC-NEW-44 + SUC-51 + SUC-52)
 
 | TA | Test | File | Marker | Scenario | Expected |
