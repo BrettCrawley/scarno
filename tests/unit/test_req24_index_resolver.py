@@ -293,3 +293,82 @@ class TestEndpointReservedFields:
             coordinate_prefix="com.corp.",
         )
         assert ep2.coordinate_prefix == "com.corp."
+
+
+# ── PUC-007 — rejection warnings never carry a credentialed URL ────────────
+
+
+_CREDENTIALED_URL = "https://ci-bot:glpat-SECRETTOKEN@nexus.corp/maven"
+_SECRET_FRAGMENTS = ("ci-bot", "glpat-SECRETTOKEN")
+
+
+class TestRejectionWarningsRedactCredentials:
+    """Rejection warnings land in ``result.errors`` — the persistent
+    report channel rendered into JSON / SARIF / Markdown / text. PUC-007
+    forbids credentialed URLs there, so the validator must name only the
+    redacted endpoint."""
+
+    @pytest.mark.requirement("SEC-NEW-66")
+    def test_validator_message_omits_userinfo(self):
+        from scarno.indexing.resolver import _validate_url
+
+        with pytest.raises(ValueError) as excinfo:
+            _validate_url(_CREDENTIALED_URL)
+        message = str(excinfo.value)
+        assert "userinfo" in message
+        for secret in _SECRET_FRAGMENTS:
+            assert secret not in message
+        # Still identifies which endpoint was rejected.
+        assert "nexus.corp" in message
+
+    @pytest.mark.requirement("SEC-NEW-66")
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("https://ci-bot:tok@nexus.corp/maven", "https://nexus.corp"),
+            ("https://ci-bot:tok@nexus.corp/m?token=tok", "https://nexus.corp"),
+            ("https://ci-bot:tok@nexus.corp:8443/m", "https://nexus.corp:8443"),
+            ("http://ci-bot:tok@nexus.corp", "http://nexus.corp"),
+            ("https://ci-bot:tok@nexus.corp:notaport/m", "<unparseable URL>"),
+            ("https://", "<no host>"),
+            ("not-a-url", "<no host>"),
+        ],
+    )
+    def test_redaction_keeps_only_scheme_host_port(self, raw, expected):
+        from scarno.indexing.resolver import _redact_url
+
+        assert _redact_url(raw) == expected
+
+    @pytest.mark.requirement("FR-257")
+    def test_env_credentialed_url_not_echoed(self, monkeypatch):
+        monkeypatch.setenv("SCARNO_INDEX_MAVEN", _CREDENTIALED_URL)
+        endpoints, warnings = resolve_indexes(
+            cli_indexes=None, fetch_enabled=False,
+        )
+        assert endpoints == []
+        assert any("rejected" in w for w in warnings), warnings
+        joined = "\n".join(warnings)
+        for secret in _SECRET_FRAGMENTS:
+            assert secret not in joined, joined
+
+    @pytest.mark.requirement("FR-258")
+    def test_user_config_credentialed_url_not_echoed(
+        self, tmp_path, monkeypatch
+    ):
+        fake_home = tmp_path / "fake_home"
+        cfg_dir = fake_home / ".config" / "scarno"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "config.toml").write_text(
+            "[indexes]\n" f'maven = ["{_CREDENTIALED_URL}"]\n'
+        )
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+        endpoints, warnings = resolve_indexes(
+            cli_indexes=None, fetch_enabled=False,
+        )
+        assert endpoints == []
+        assert any("rejected" in w for w in warnings), warnings
+        joined = "\n".join(warnings)
+        for secret in _SECRET_FRAGMENTS:
+            assert secret not in joined, joined

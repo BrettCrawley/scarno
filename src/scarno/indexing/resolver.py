@@ -45,11 +45,44 @@ from scarno.security import resolve_user_config_path, sanitise
 _ENV_PREFIX = "SCARNO_INDEX_"
 
 
+def _redact_url(url: str) -> str:
+    """Return a display-safe rendering of ``url`` for audit lines.
+
+    PUC-007 states the invariant plainly: never log credentialed
+    URLs. Rejection warnings are appended to ``result.errors`` — the
+    *persistent* report channel rendered into JSON / SARIF / Markdown
+    / text — so a rejected URL must never be echoed verbatim: it may
+    carry ``user:pass@`` userinfo, and its path or query may carry a
+    token just as easily.
+
+    Only scheme + host + port survive — enough to identify which
+    endpoint was rejected, never enough to leak a secret. Mirrors the
+    request-time twin in :mod:`scarno.indexing.http_client`, which
+    likewise never echoes the URL it rejects.
+
+    Never raises: it runs on the rejection path, where the input is
+    by definition malformed.
+    """
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        port = parsed.port  # raises ValueError on a non-numeric port
+        scheme = parsed.scheme
+    except (ValueError, AttributeError):
+        return "<unparseable URL>"
+    if not host:
+        return "<no host>"
+    netloc = host if port is None else f"{host}:{port}"
+    return f"{scheme}://{netloc}" if scheme else f"//{netloc}"
+
+
 def _validate_url(url: str) -> None:
     """SEC-NEW-66 + N-2 envelope — HTTPS-only, no userinfo, must have
     a host, well-formed URL.
 
-    Raises ``ValueError`` on rejection. The fetcher's
+    Raises ``ValueError`` on rejection; the message names only the
+    redacted URL (see :func:`_redact_url`) because every caller
+    forwards it into the persistent report channel. The fetcher's
     :class:`SafeHttpsClient` re-runs equivalent checks at request time
     so a bug here cannot bypass the network controls — this is the
     *parse-time* gate that ensures bad URLs never reach the resolver
@@ -61,14 +94,16 @@ def _validate_url(url: str) -> None:
         raise ValueError(f"unparseable URL: {exc}") from exc
     if parsed.scheme != "https":
         raise ValueError(
-            f"index URL must use https:// (got {parsed.scheme!r}); {url!r}"
+            f"index URL must use https:// (got {parsed.scheme!r}); "
+            f"{_redact_url(url)!r}"
         )
     if parsed.username is not None or parsed.password is not None:
         raise ValueError(
-            f"index URL must not contain userinfo (user:pass@): {url!r}"
+            "index URL must not contain userinfo (user:pass@): "
+            f"{_redact_url(url)!r}"
         )
     if not parsed.netloc or not parsed.hostname:
-        raise ValueError(f"index URL missing host: {url!r}")
+        raise ValueError(f"index URL missing host: {_redact_url(url)!r}")
 
 
 # ── per-source parsers ──────────────────────────────────────────────────────
