@@ -81,6 +81,7 @@ from scarno.security import (
     PathEscapeError,
     resolve_and_confine,
     safe_jar_entries,
+    sanitise,
 )
 
 _JAVAP_TIMEOUT_SEC = 10
@@ -255,7 +256,19 @@ def _build_jar_inventory_map(
             continue
         try:
             entries = safe_jar_entries(jar_path)
-        except (ValueError, OSError):
+        except ValueError as exc:
+            # A resource guard refused this JAR. Swallowing that turned a
+            # guard into silently wrong analysis: the dep simply vanishes
+            # from the inventory and is then classified on incomplete
+            # evidence, with nothing in the report to say so.
+            errors.append(
+                f"jar-inventory: {sanitise(dep.name)} skipped — "
+                f"{sanitise(str(exc))}"
+            )
+            continue
+        except OSError:
+            # Unreadable / missing file: already an ordinary miss, and
+            # _locate_dependency_jar has reported what it could.
             continue
         packages: set[str] = set()
         class_entries: list[str] = []

@@ -33,6 +33,18 @@ MAX_FILE_BYTES: int = 10 * 1024 * 1024
 MAX_DEP_NAME_LEN: int = 256
 MAX_JAR_ENTRIES: int = 10_000
 MAX_JAR_ENTRY_BYTES: int = 50 * 1024 * 1024
+# Absolute ceiling on a JAR we will open at all. JARs were exempt from
+# every size cap, and ``zipfile.ZipFile()`` builds a ``ZipInfo`` for
+# every central-directory record during construction — measured at
+# ~600 bytes of peak heap per entry, against ~78 bytes on disk for the
+# smallest possible entry. Peak memory is therefore bounded by roughly
+# 7.7x the archive size no matter what the archive claims about itself,
+# which is what makes this the backstop behind the entry pre-check in
+# :func:`safe_jar_entries`. 128 MiB is far above any single library JAR
+# in a dependency cache (uber-JARs that big are build outputs, not
+# dependencies) and bounds the worst case near 1 GiB instead of leaving
+# it unbounded.
+MAX_JAR_BYTES: int = 128 * 1024 * 1024
 
 # REQ-19 — Phase 9 lockfile + edge caps (SEC-NEW-37) and version-string
 # sanitisation cap (SEC-NEW-38). Lockfile-byte cap is tighter than the
@@ -500,14 +512,70 @@ def check_root_privilege() -> None:
 # ── JAR entry enumeration with ZIP-bomb guards ───────────────────────────────
 
 
+def _declared_entry_count(jar_path: str | Path) -> int | None:
+    """Read the entry count out of the end-of-central-directory record.
+
+    Returns ``None`` when the record cannot be located or read — this is
+    an *advisory* pre-check, never an authority. A hostile archive can
+    make this disagree with what :mod:`zipfile` eventually parses, so a
+    ``None`` (or an understated count) only costs the early rejection;
+    :data:`MAX_JAR_BYTES` still bounds the damage, and the exact count is
+    still checked after the fact. That asymmetry is deliberate: hand
+    parsing that is allowed to *approve* an archive is how an earlier
+    attempt at this grew bypasses.
+
+    ZIP64 needs no special case. Its 16-bit field is pinned at 0xFFFF,
+    which is already far above :data:`MAX_JAR_ENTRIES`, so a ZIP64
+    archive is rejected on the strength of that value alone.
+    """
+    _EOCD_SIG = b"PK\x05\x06"
+    try:
+        size = Path(jar_path).stat().st_size
+        with open(jar_path, "rb") as fh:
+            # The record is 22 bytes plus a comment of up to 64 KiB.
+            tail_len = min(size, 22 + 65_535)
+            fh.seek(size - tail_len)
+            tail = fh.read(tail_len)
+    except OSError:
+        return None
+    offset = tail.rfind(_EOCD_SIG)
+    if offset < 0 or offset + 12 > len(tail):
+        return None
+    return int.from_bytes(tail[offset + 10:offset + 12], "little")
+
+
 def safe_jar_entries(jar_path: str | Path) -> list[str]:
     """Return the list of ``*.class`` entries in a JAR, with ZIP-bomb guards.
 
     Rejects archives that exceed ``MAX_JAR_ENTRIES`` or declare any entry
-    whose uncompressed size exceeds ``MAX_JAR_ENTRY_BYTES`` (SEC-NEW-02).
+    whose uncompressed size exceeds ``MAX_JAR_ENTRY_BYTES`` (SEC-NEW-02),
+    and refuses to open one larger than ``MAX_JAR_BYTES`` at all.
+
+    Order matters. ``zipfile.ZipFile()`` materialises a ``ZipInfo`` for
+    every central-directory record while it constructs, so checking the
+    entry count against the returned ``infolist()`` came far too late —
+    the allocation the cap exists to prevent had already happened, and a
+    crafted archive reached 2 GiB of resident memory before being told it
+    had too many entries. Both guards below run before the open.
     """
+    try:
+        size = Path(jar_path).stat().st_size
+    except OSError:
+        size = 0
+    if size > MAX_JAR_BYTES:
+        raise ValueError(
+            f"JAR {jar_path!s} is {size} bytes (limit {MAX_JAR_BYTES})"
+        )
+    declared = _declared_entry_count(jar_path)
+    if declared is not None and declared > MAX_JAR_ENTRIES:
+        raise ValueError(
+            f"JAR {jar_path!s} declares {declared} entries "
+            f"(limit {MAX_JAR_ENTRIES})"
+        )
     with zipfile.ZipFile(str(jar_path), "r") as zf:
         infos = zf.infolist()
+        # Re-checked against what was actually parsed, because the
+        # pre-check above is advisory and may have been lied to.
         if len(infos) > MAX_JAR_ENTRIES:
             raise ValueError(
                 f"JAR {jar_path!s} has {len(infos)} entries "
