@@ -66,7 +66,10 @@ from scarno.indexing.http_client import (
     SafeHttpsClient,
     SafeHttpsError,
 )
-from scarno.indexing.validator import ValidatedCoordinate
+from scarno.indexing.validator import (
+    ValidatedCoordinate,
+    is_valid_fetch_version,
+)
 from scarno.models import Finding, FindingKind, FindingSeverity
 from scarno.security import (
     PathEscapeError,
@@ -364,6 +367,24 @@ class RemoteArtifactFetcher:
                 f"req24-fetch: rejecting unsafe version "
                 f"{sanitise(version)!r} for {sanitise(coord.raw)} "
                 "(version did not survive sanitisation)"
+            )
+            return None
+        # The version is repo-derived and is templated into the
+        # outbound index URL and the cache path. The sanitiser above is
+        # a report-rendering control: it leaves ``/``, ``..``, ``?``,
+        # ``#``, ``%``, ``&`` and ``:`` intact, so it cannot stop a
+        # hostile ``<version>`` from steering the GET to an arbitrary
+        # path/query on the configured (possibly internal) index host.
+        # Require the strict allow-list before the value reaches ANY
+        # URL or path construction. This is the sole entry point into
+        # the fetch machinery, so the checksum-sibling URLs derived
+        # from the artefact URL are covered too.
+        if not is_valid_fetch_version(clean_version):
+            _audit(
+                self._warnings,
+                f"req24-fetch: rejecting unsafe version "
+                f"{sanitise(version)!r} for {sanitise(coord.raw)} "
+                "(not a valid index path segment)"
             )
             return None
 
@@ -925,6 +946,15 @@ class RemoteArtifactFetcher:
         if extension not in {"jar", "pom"}:
             raise ValueError(
                 f"_artefact_url: extension {extension!r} not in allow-list"
+            )
+        # Defence in depth: ``fetch`` already gates the version, but the
+        # allow-list is re-asserted at the sink so no future call path
+        # can template an unvalidated, repo-derived version into the
+        # request path or query.
+        if not is_valid_fetch_version(version):
+            raise ValueError(
+                f"_artefact_url: version {version!r} is not a valid "
+                "index path segment"
             )
         group, artifact = coord.components
         group_path = group.replace(".", "/")

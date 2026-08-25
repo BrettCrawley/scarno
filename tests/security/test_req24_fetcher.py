@@ -408,3 +408,124 @@ class TestDisclosureMessage:
         success = [w for w in warnings if "fetched com.google.guava:guava" in w]
         assert len(success) == 1
         assert "provenance=remote" in success[0]
+
+
+# ── SEC-NEW-59 — repo-derived version allow-list at the fetch entry ───────
+
+
+class TestVersionAllowList:
+    """The ``<version>`` comes from the analysed repo and is templated
+    into the outbound index URL. ``sanitise_declared_version`` is a
+    report-rendering sanitiser and leaves ``/ .. ? # % & :`` intact, so
+    the fetch entry point applies a strict allow-list — otherwise a
+    hostile pom.xml steers scarno's GET to an arbitrary path or query
+    on the operator's (possibly internal) index host."""
+
+    @pytest.mark.requirement("SEC-NEW-59")
+    @pytest.mark.parametrize("version", [
+        "1.0?leak=1",             # query injection
+        "1.0#frag",               # fragment injection
+        "1.0&x=y",
+        "1.0/../../admin",        # path traversal on the index host
+        "../1.0",
+        "..",
+        "1.0%2f..%2fadmin",       # percent-escaped traversal
+        "1.0:8080",
+        "1.0@evil.example",       # userinfo synthesis
+        "1.0 2.0",
+    ])
+    def test_hostile_version_never_reaches_the_network(
+        self, tmp_path, version,
+    ):
+        client = _ScriptedClient({})
+        warnings: list[str] = []
+        fetcher = _make_fetcher(tmp_path, client, warnings)
+
+        result = fetcher.fetch(
+            _GUAVA, version, endpoints=[_make_endpoint()],
+        )
+
+        assert result is None
+        assert client.requests == [], (
+            f"hostile version {version!r} reached the index: "
+            f"{client.requests}"
+        )
+        assert any("rejecting unsafe version" in w for w in warnings), warnings
+
+    @pytest.mark.requirement("SEC-NEW-59")
+    @pytest.mark.parametrize("version", [
+        "1.0",
+        "2.0-SNAPSHOT",
+        "1.0-20230101.120000-1",
+        "5.3.20.RELEASE",
+        "1.0.0.Final",
+        "31.1-jre",
+        "2.0.0-rc.1",
+        "1.0.0+build.5",
+        "20030203.000550",
+        "r08",
+        "1.0_01",
+    ])
+    def test_real_world_versions_still_fetch(self, tmp_path, version):
+        """The allow-list must not reject any published Maven version
+        shape — SNAPSHOT timestamps, qualifiers, classifier-ish
+        suffixes, semver build metadata, date versions."""
+        artefact = b"PK\x03\x04"
+        url = (
+            f"https://repo.example/m2/com/google/guava/guava/"
+            f"{version}/guava-{version}.jar"
+        )
+        client = _ScriptedClient({
+            url: _resp(status=200, body=artefact),
+            url + ".sha512": _checksum_resp(artefact, "sha512"),
+        })
+        warnings: list[str] = []
+        fetcher = _make_fetcher(tmp_path, client, warnings)
+
+        result = fetcher.fetch(_GUAVA, version, endpoints=[
+            _make_endpoint("https://repo.example/m2"),
+        ])
+
+        assert result is not None, warnings
+        assert client.requests[0] == url
+
+
+class TestVersionAllowListEdges:
+    """Coverage for the two rejection branches the F8 patch added that
+    its own tests do not reach: the length/empty guard in
+    :func:`is_valid_fetch_version`, and the defence-in-depth re-check at
+    the URL sink."""
+
+    @pytest.mark.requirement("SEC-NEW-59")
+    @pytest.mark.parametrize("version", ["", "9" * 257])
+    def test_empty_and_overlong_versions_rejected(self, version):
+        """Empty and over-cap versions fail closed before the character
+        allow-list is consulted."""
+        from scarno.indexing.validator import is_valid_fetch_version
+
+        assert is_valid_fetch_version(version) is False
+
+    @pytest.mark.requirement("SEC-NEW-59")
+    def test_boundary_length_version_accepted(self):
+        """The cap itself is inclusive — a 256-character version is
+        still a valid path segment, so the guard must not be off by one.
+        """
+        from scarno.indexing.validator import is_valid_fetch_version
+
+        assert is_valid_fetch_version("9" * 256) is True
+
+    @pytest.mark.requirement("SEC-NEW-59")
+    def test_artefact_url_rejects_unvalidated_version_at_the_sink(
+        self, tmp_path,
+    ):
+        """``fetch`` gates the version, but ``_artefact_url`` re-asserts
+        the allow-list so a future call path cannot template a
+        repo-derived version straight into the request URL. Calling the
+        sink directly is the only way to exercise that guard.
+        """
+        fetcher = _make_fetcher(tmp_path, _ScriptedClient({}), [])
+
+        with pytest.raises(ValueError, match="not a valid index segment|not a valid index path segment"):
+            fetcher._artefact_url(
+                _make_endpoint(), _GUAVA, "1.0/../../admin", "jar",
+            )

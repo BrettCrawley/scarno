@@ -251,8 +251,8 @@ _MAVEN_ARTIFACT = re.compile(r"^[A-Za-z][A-Za-z0-9._-]*$")
 def _validate_maven(raw: str) -> tuple[str, ...]:
     """Maven coord ``groupId:artifactId`` → ``(group, artifact)``.
 
-    Versions are validated separately at fetch time via
-    :func:`scarno.security.sanitise_declared_version`.
+    Versions are not part of the coordinate; they are validated
+    separately at fetch time via :func:`is_valid_fetch_version`.
     """
     parts = raw.split(":")
     if len(parts) != 2:
@@ -306,3 +306,47 @@ def _validate_npm(raw: str) -> tuple[str, ...]:
     if not _NPM_NAME.match(raw):
         raise ValueError(f"npm name {raw!r} invalid")
     return (raw,)
+
+
+# ── Version validation (fetch-time) ─────────────────────────────────────────
+#
+# The version is not part of a :class:`ValidatedCoordinate` (it is
+# chosen per fetch), but it is just as attacker-controlled — it comes
+# from the analysed repo's manifest — and it is templated into the
+# index URL and the quarantined-cache path exactly like a coordinate
+# component. It therefore gets the same allow-list treatment.
+#
+# :func:`scarno.security.sanitise_declared_version` is NOT sufficient
+# here: it is a report-rendering sanitiser and leaves ``/``, ``..``,
+# ``?``, ``#``, ``%``, ``&`` and ``:`` intact, so a hostile
+# ``<version>`` could otherwise steer scarno's outbound GET to an
+# arbitrary path or query string on the configured (possibly
+# internal) index host.
+#
+# The shape mirrors ``_is_valid_gav_component`` in the Maven analyser,
+# widened by ``+`` for semver build metadata. It accepts every
+# real-world published version shape — ``1.0``, ``2.0-SNAPSHOT``,
+# ``1.0-20230101.120000-1``, ``5.3.20.RELEASE``, ``1.0.0.Final``,
+# ``31.1-jre``, ``2.0.0-rc.1``, ``1.0.0+build.5``, ``20030203.000550``,
+# ``r08``. Maven version RANGES (``[1.0,2.0)``) are rejected: an index
+# never serves an artefact under a range as a path segment, and the
+# bracket characters were already stripped upstream.
+
+_VERSION_RE: Final[re.Pattern[str]] = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._+-]*$"
+)
+
+
+def is_valid_fetch_version(version: str) -> bool:
+    """Return ``True`` if *version* is safe to template into an index
+    URL path segment and a cache path.
+
+    Fail-closed: everything outside the allow-list is rejected —
+    path separators, ``..``, query/fragment introducers, percent
+    escapes, userinfo ``@``, whitespace, control bytes and non-ASCII.
+    """
+    if not version or len(version) > _MAX_COMPONENT_LEN:
+        return False
+    if ".." in version:
+        return False
+    return _VERSION_RE.match(version) is not None
