@@ -10,6 +10,9 @@ Scenarios covered:
   emit ``TS-INTEGRITY-MISMATCH`` (HIGH) finding.
 * Secondary unreachable → degrade to single-source with audit (the
   operator who enabled cross-check still gets an analysis result).
+* Primary answers 4xx → NO secondary request (SEC-NEW-61 / T-44
+  holds on the cross-check path too), while 5xx/connection-level
+  failures still fall through.
 * Cross-check off → standard single-source path (existing behaviour
   preserved exactly).
 """
@@ -69,6 +72,17 @@ def _ok(body: bytes) -> HttpResponse:
 
 def _checksum(body: bytes) -> HttpResponse:
     return _ok(hashlib.sha256(body).hexdigest().encode("ascii"))
+
+
+def _status(code: int, body: bytes = b"") -> HttpResponse:
+    return HttpResponse(
+        status=code, headers={}, body=body,
+        final_url="", pinned_ip="8.8.8.8",
+    )
+
+
+def _artefact_url(index_url: str) -> str:
+    return f"{index_url}/com/google/guava/guava/1.0/guava-1.0.jar"
 
 
 def _endpoints() -> list[IndexEndpoint]:
@@ -232,6 +246,93 @@ class TestSecondaryUnreachable:
         )
 
 
+# ── Scenario: primary 4xx → no secondary request (SEC-NEW-61) ─────────────
+
+
+class TestNoFallthroughOn4xxUnderCrossCheck:
+    """``--integrity-cross-check`` is advertised as an integrity
+    *strengthening* flag; it must not weaken SEC-NEW-61. A 4xx from
+    the operator's authoritative (priority-0) index is final: the
+    lower-priority index is never asked, so the coordinate can't leak
+    (T-44) and a public index can't substitute an artefact the primary
+    says does not exist (dependency confusion)."""
+
+    @pytest.mark.requirement("SEC-NEW-61")
+    @pytest.mark.requirement("T-44")
+    def test_primary_404_does_not_query_secondary(self, tmp_path):
+        evil = b"PK\x03\x04attacker-published"
+        client = _ScriptedClient([
+            _status(404),   # primary: corp Nexus denies the coordinate
+            # Scripted so a regression would *succeed* in fetching the
+            # attacker's artefact rather than merely erroring out.
+            _ok(evil),
+            _ok(hashlib.sha512(evil).hexdigest().encode("ascii")),
+        ])
+        findings: list[Finding] = []
+        fetcher, warnings = _fetcher(tmp_path, client, findings=findings)
+
+        result = fetcher.fetch(_GUAVA, "1.0", _endpoints())
+
+        assert result is None
+        assert client.calls == [_artefact_url(_PRIMARY_URL)], (
+            f"cross-check fell through on 4xx and leaked the "
+            f"coordinate: {client.calls}"
+        )
+        assert findings == []
+        assert any("NOT falling through" in w for w in warnings)
+        assert any("would leak coord" in w for w in warnings)
+
+    @pytest.mark.requirement("SEC-NEW-61")
+    def test_primary_403_does_not_query_secondary(self, tmp_path):
+        """401/403 are authoritative too — an index that refuses to
+        answer must not hand the coordinate to the next one."""
+        client = _ScriptedClient([
+            _status(403),
+            _ok(b"PK\x03\x04should-never-be-requested"),
+        ])
+        fetcher, warnings = _fetcher(tmp_path, client)
+
+        result = fetcher.fetch(_GUAVA, "1.0", _endpoints())
+
+        assert result is None
+        assert client.calls == [_artefact_url(_PRIMARY_URL)]
+
+    @pytest.mark.requirement("SEC-NEW-61")
+    def test_primary_503_still_falls_through(self, tmp_path):
+        """Connection-level failures (502/503/504) remain a legitimate
+        fall-through trigger — the fix must not turn cross-check into
+        a hard single-source path."""
+        body = b"PK\x03\x04from-secondary"
+        client = _ScriptedClient([
+            _status(503),  # primary is down, not answering "no"
+            _ok(body),     # secondary serves it
+            _ok(hashlib.sha512(body).hexdigest().encode("ascii")),
+        ])
+        fetcher, warnings = _fetcher(tmp_path, client)
+
+        result = fetcher.fetch(_GUAVA, "1.0", _endpoints())
+
+        assert result is not None
+        assert result.read_bytes() == body
+        assert _artefact_url(_SECONDARY_URL) in client.calls
+
+    @pytest.mark.requirement("SEC-NEW-61")
+    def test_primary_connection_failure_still_falls_through(self, tmp_path):
+        body = b"PK\x03\x04from-secondary"
+        client = _ScriptedClient([
+            SafeHttpsError("primary connect refused"),
+            _ok(body),
+            _ok(hashlib.sha512(body).hexdigest().encode("ascii")),
+        ])
+        fetcher, warnings = _fetcher(tmp_path, client)
+
+        result = fetcher.fetch(_GUAVA, "1.0", _endpoints())
+
+        assert result is not None
+        assert result.read_bytes() == body
+        assert _artefact_url(_SECONDARY_URL) in client.calls
+
+
 # ── Scenario: cross_check OFF → identical to pre-F2 behaviour ─────────────
 
 
@@ -257,3 +358,58 @@ class TestCrossCheckOffPreservesBehaviour:
         assert not any("transient drift" in w for w in warnings)
         assert not any("TS-INTEGRITY-MISMATCH" in w for w in warnings)
         assert not any("degraded to single-source" in w for w in warnings)
+
+
+class TestNonFallthroughOutcomesUnderCrossCheck:
+    """The remaining two authoritative outcomes on the cross-check
+    fetch path. Both changed shape when F9 threaded ``_Outcome`` back
+    out of ``_fetch_artefact_bytes``, and neither is reached by the 4xx
+    tests above, so each is pinned here: an authoritative answer must
+    end the fetch without the secondary ever being asked.
+    """
+
+    @pytest.mark.requirement("SEC-NEW-61")
+    def test_unexpected_status_does_not_query_secondary(self, tmp_path):
+        """A non-4xx, non-200 reply (a redirect the client surfaced, a
+        201, ...) is treated as authoritative, not as a connection
+        failure — so it must not fall through either."""
+        client = _ScriptedClient([
+            _status(301),
+            _ok(b"PK\x03\x04should-never-be-requested"),
+        ])
+        fetcher, warnings = _fetcher(tmp_path, client)
+
+        result = fetcher.fetch(_GUAVA, "1.0", _endpoints())
+
+        assert result is None
+        assert client.calls == [_artefact_url(_PRIMARY_URL)], (
+            f"unexpected status fell through and leaked the "
+            f"coordinate: {client.calls}"
+        )
+        assert any("NOT falling through" in w for w in warnings)
+
+    @pytest.mark.requirement("SEC-NEW-61")
+    def test_oversize_primary_body_does_not_query_secondary(self, tmp_path):
+        """An over-cap body from the primary is a refusal by policy, not
+        a transport failure. Falling through would let a lower-priority
+        index answer for a coordinate the primary actually served."""
+        client = _ScriptedClient([
+            _ok(b"PK\x03\x04" + b"A" * 4096),
+            _ok(b"PK\x03\x04should-never-be-requested"),
+        ])
+        warnings: list[str] = []
+        fetcher = RemoteArtifactFetcher(
+            client=client,
+            warnings=warnings,
+            cross_check=True,
+            cache_root=tmp_path / "fetched",
+            per_artefact_max_bytes=64,
+        )
+
+        result = fetcher.fetch(_GUAVA, "1.0", _endpoints())
+
+        assert result is None
+        assert client.calls == [_artefact_url(_PRIMARY_URL)], (
+            f"over-cap body fell through: {client.calls}"
+        )
+        assert any("exceeds per-artefact cap" in w for w in warnings)

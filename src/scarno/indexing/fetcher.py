@@ -34,7 +34,9 @@ Invariants (mapping to REQ-24 SRTM):
   the next endpoint on 401 / 403 / 404. Falling through would leak
   internal coordinate names to public indexes (I2). Only
   connection-level failures (DNS / TLS / timeout / 502 / 503 / 504)
-  fall through.
+  fall through. This holds on the ``--integrity-cross-check`` path
+  too: a 4xx from the primary index ends the fetch without querying
+  the secondary.
 * SEC-NEW-64 — Cache root mode 0700.
 * SEC-NEW-65 — Every cache write through ``resolve_and_confine``.
 * SEC-NEW-66 — Total cache size cap with LRU eviction.
@@ -585,13 +587,32 @@ class RemoteArtifactFetcher:
         (primary only) with an audit line — this preserves usability
         when the secondary is just down.
         """
-        primary_bytes = self._fetch_artefact_bytes(
+        primary_outcome, primary_bytes = self._fetch_artefact_bytes(
             coord, version, primary, extension,
         )
         if primary_bytes is None:
-            # Primary failed — without it there's no anchor to
-            # cross-check against. Fall back to the standard single-
-            # source loop (so the secondary still gets a chance).
+            if primary_outcome is _Outcome.AUTHORITATIVE_NOT_FOUND:
+                # SEC-NEW-61 — the primary answered authoritatively
+                # (4xx / unexpected status / over-cap). Querying the
+                # secondary here would leak the coordinate to the
+                # lower-priority index (T-44 probe oracle) and let it
+                # substitute an artefact the primary says does not
+                # exist (dependency confusion). Cross-check is an
+                # integrity *strengthening* flag; it must not weaken
+                # the keystone confidentiality control.
+                _audit(
+                    self._warnings,
+                    f"req24-fetch: authoritative not-found from "
+                    f"{sanitise(primary.url)} for {sanitise(coord.raw)}"
+                    f"@{sanitise(version)}; NOT falling through to "
+                    f"{sanitise(secondary.url)} (would leak coord to "
+                    "next index) — cross-check"
+                )
+                return None
+            # Primary failed at the connection level — without it
+            # there's no anchor to cross-check against. Fall back to
+            # the standard single-source loop (so the secondary still
+            # gets a chance), exactly as SEC-NEW-61 permits.
             for endpoint in (secondary,):
                 outcome = self._try_endpoint(
                     endpoint, coord, version, cache_path, extension,
@@ -602,7 +623,7 @@ class RemoteArtifactFetcher:
                     return None
             return None
 
-        secondary_bytes = self._fetch_artefact_bytes(
+        _secondary_outcome, secondary_bytes = self._fetch_artefact_bytes(
             coord, version, secondary, extension,
         )
         if secondary_bytes is None:
@@ -632,7 +653,7 @@ class RemoteArtifactFetcher:
             _CROSS_CHECK_BACKOFF_JITTER_S,
         )
         time.sleep(max(0.0, backoff))
-        retry_bytes = self._fetch_artefact_bytes(
+        _retry_outcome, retry_bytes = self._fetch_artefact_bytes(
             coord, version, secondary, extension,
         )
         if retry_bytes is not None and hashlib.sha256(
@@ -695,12 +716,18 @@ class RemoteArtifactFetcher:
         version: str,
         endpoint: IndexEndpoint,
         extension: str = "jar",
-    ) -> bytes | None:
+    ) -> tuple["_Outcome", bytes | None]:
         """Fetch just the artefact bytes from one endpoint, applying
         size cap + 4xx-authoritative semantics, but WITHOUT writing
-        to the cache. Returns the body on success, ``None`` on any
-        failure (with sanitised audit line). Used by both the
-        cross-check path and (indirectly) the single-source path."""
+        to the cache.
+
+        Returns ``(_Outcome, body)`` — the same three-way verdict the
+        single-source loop uses (:meth:`_try_endpoint`), so callers can
+        tell an *authoritative* refusal (4xx / unexpected status / cap)
+        apart from a connection-level failure (DNS / TLS / timeout /
+        502 / 503 / 504). SEC-NEW-61 permits falling through to another
+        index ONLY for the latter. ``body`` is non-``None`` exactly
+        when the outcome is :attr:`_Outcome.SUCCESS`."""
         url = self._artefact_url(endpoint, coord, version, extension)
         try:
             response = self._client.get(url)
@@ -711,14 +738,14 @@ class RemoteArtifactFetcher:
                 f"{sanitise(coord.raw)}@{sanitise(version)} from "
                 f"{sanitise(endpoint.url)}: {sanitise(str(exc))}"
             )
-            return None
+            return _Outcome.FALLTHROUGH, None
         if response.status in _FALLTHROUGH_STATUS_CODES:
             _audit(
                 self._warnings,
                 f"req24-fetch: {response.status} from "
                 f"{sanitise(endpoint.url)} (cross-check)"
             )
-            return None
+            return _Outcome.FALLTHROUGH, None
         if response.status >= 400:
             _audit(
                 self._warnings,
@@ -726,9 +753,9 @@ class RemoteArtifactFetcher:
                 f"{sanitise(endpoint.url)} for "
                 f"{sanitise(coord.raw)}@{sanitise(version)} (cross-check)"
             )
-            return None
+            return _Outcome.AUTHORITATIVE_NOT_FOUND, None
         if response.status != 200:
-            return None
+            return _Outcome.AUTHORITATIVE_NOT_FOUND, None
         if len(response.body) > self._cache.per_artefact_max_bytes:
             _audit(
                 self._warnings,
@@ -736,8 +763,8 @@ class RemoteArtifactFetcher:
                 f"exceeds per-artefact cap "
                 f"({self._cache.per_artefact_max_bytes}) — cross-check"
             )
-            return None
-        return response.body
+            return _Outcome.AUTHORITATIVE_NOT_FOUND, None
+        return _Outcome.SUCCESS, response.body
 
     def _finalise_single_source(
         self,
