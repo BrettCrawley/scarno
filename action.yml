@@ -194,6 +194,22 @@ runs:
             out.write(f"highest-severity={highest}\n")
 
         # Per-finding workflow-command annotations
+        def _esc_data(value):
+            # Escape the message body per the GitHub workflow-command spec.
+            # A raw LF would otherwise let a scanned repo start a workflow
+            # command of its own (e.g. ::stop-commands::).
+            return (
+                str(value)
+                .replace("%", "%25")
+                .replace("\r", "%0D")
+                .replace("\n", "%0A")
+            )
+
+        def _esc_prop(value):
+            # Property values need the data escaping plus ':' and ',',
+            # which terminate the property list. The runner decodes these.
+            return _esc_data(value).replace(":", "%3A").replace(",", "%2C")
+
         if os.environ.get("TS_ANNOTATE", "true") == "true":
             sev_to_cmd = {
                 "CRITICAL": "error",
@@ -203,12 +219,10 @@ runs:
             }
             for f in findings:
                 cmd = sev_to_cmd.get(f.get("severity", "LOW"), "warning")
-                file_ = f.get("file_path", "")
-                line = f.get("line", 1)
-                rule_id = f.get("rule_id", "TS-UNKNOWN")
-                msg = f.get("message", "")
-                # Escape workflow-command control chars per GitHub spec
-                msg = msg.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                file_ = _esc_prop(f.get("file_path", ""))
+                line = _esc_prop(f.get("line", 1))
+                rule_id = _esc_prop(f.get("rule_id", "TS-UNKNOWN"))
+                msg = _esc_data(f.get("message", ""))
                 print(f"::{cmd} file={file_},line={line},title={rule_id}::{msg}")
         PY
 
