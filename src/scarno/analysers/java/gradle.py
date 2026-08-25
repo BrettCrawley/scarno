@@ -209,9 +209,9 @@ class GradleBuildResolver(BaseAnalyser):
         deps_by_key: dict[tuple[str, str], Dependency] = {}
 
         build_files = _discover_build_files(root, errors)
-        for path in build_files:
+        for path, rel_source in build_files:
             try:
-                _parse_build_file(path, root, catalog, deps_by_key, errors)
+                _parse_build_file(path, rel_source, catalog, deps_by_key, errors)
             except Exception as exc:  # noqa: BLE001 — BaseAnalyser contract
                 errors.append(
                     f"gradle: unexpected error parsing {path.name} — {exc}"
@@ -244,13 +244,22 @@ def _is_test_configuration_source(source: str) -> bool:
 # ── Build-file discovery ─────────────────────────────────────────────────────
 
 
-def _discover_build_files(root: Path, errors: list[str]) -> list[Path]:
-    """Return root build file + submodule build files via settings include."""
-    out: list[Path] = []
+def _discover_build_files(root: Path, errors: list[str]) -> list[tuple[Path, str]]:
+    """Return root build file + submodule build files via settings include.
+
+    Each entry is ``(read_path, rel_source)``. ``read_path`` is the path
+    that will actually be opened — for submodule build files it is the
+    symlink-resolved path confirmed to sit inside ``root``, so the
+    confinement check cannot be split from the read (SEC-002).
+    ``rel_source`` is the project-relative path as the project lays it
+    out, i.e. before symlink resolution, so ``Dependency.source`` stays
+    attributed to the including module.
+    """
+    out: list[tuple[Path, str]] = []
     for name in ("build.gradle", "build.gradle.kts"):
         candidate = root / name
         if candidate.exists():
-            out.append(candidate)
+            out.append((candidate, name))
             break  # at most one of the two at root
 
     # Discover included submodules
@@ -281,8 +290,25 @@ def _discover_build_files(root: Path, errors: list[str]) -> list[Path]:
                 continue
             for child_name in ("build.gradle", "build.gradle.kts"):
                 child_path = submodule_dir / child_name
-                if child_path.exists() and child_path not in out:
-                    out.append(child_path)
+                if not child_path.exists():
+                    continue
+                # Confining the directory is not enough: the build file
+                # inside it may itself be a symlink out of the tree. Read
+                # the resolved path so the check and the open cannot drift.
+                try:
+                    resolved_child = resolve_and_confine(child_path, root)
+                except PathEscapeError:
+                    errors.append(
+                        f"{settings_name}: build file for include '{module}' "
+                        f"escapes project root; skipped"
+                    )
+                    continue
+                try:
+                    rel_source = str(child_path.relative_to(root))
+                except ValueError:
+                    rel_source = child_name
+                if resolved_child not in {read_path for read_path, _ in out}:
+                    out.append((resolved_child, rel_source))
                     break
     return out
 
@@ -329,21 +355,23 @@ def _read_bounded(path: Path, errors: list[str]) -> str:
 
 def _parse_build_file(
     path: Path,
-    root: Path,
+    rel_source: str,
     catalog: _VersionCatalog,
     deps_by_key: dict[tuple[str, str], Dependency],
     errors: list[str],
 ) -> None:
+    """Parse one build file.
+
+    ``path`` is the confinement-checked path to read; ``rel_source`` is
+    the project-relative path recorded in ``Dependency.source`` (supplied
+    by :func:`_discover_build_files` so provenance survives symlinks).
+    """
     try:
         text = _read_bounded(path, errors)
     except _ReadError:
         return
 
     ext_vars = _collect_ext_vars(text)
-    try:
-        rel_source = str(path.relative_to(root))
-    except ValueError:
-        rel_source = path.name
     stripped = _strip_comments(text)
 
     # Literal deps — quoted strings without placeholders
