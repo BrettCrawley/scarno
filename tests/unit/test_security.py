@@ -162,6 +162,29 @@ class TestStripControlChars:
         """Tab and newline are legitimate in reason strings."""
         assert strip_control_chars("reason\twith\nnewline") == "reason\twith\nnewline"
 
+    @pytest.mark.requirement("SEC-NEW-03")
+    @pytest.mark.security
+    def test_c1_controls_stripped(self):
+        """8-bit C1 controls (U+0080..U+009F) must not survive.
+
+        A terminal decoding UTF-8 in 8-bit mode acts on U+009B (CSI) and
+        U+009D (OSC) just as it does on the ESC-prefixed 7-bit forms, so
+        they are stripped alongside C0 and DEL.
+        """
+        poisoned = "pkg\x9b2J\x9d0;title\x07\x85tail"
+        result = strip_control_chars(poisoned)
+        for c1 in range(0x80, 0xA0):
+            assert chr(c1) not in result
+        assert "pkg" in result and "tail" in result
+
+    @pytest.mark.requirement("SEC-NEW-03")
+    def test_printable_latin1_preserved(self):
+        """The strip stops at U+009F — NBSP and Latin-1 letters survive."""
+        # NBSP (U+00A0) sits one past the stripped range; the Latin-1
+        # letters around it are ordinary printable text.
+        text = "caf\u00e9\u00a0\u00ff"
+        assert strip_control_chars(text) == text
+
 
 # ── sanitise (composition) ───────────────────────────────────────────────────
 

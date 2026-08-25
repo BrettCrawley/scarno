@@ -93,11 +93,24 @@ _ANSI_RE = re.compile(
     r")"
 )
 
-# C0 controls (0x00..0x1F) + DEL (0x7F), except TAB (0x09) and LF (0x0A)
-# which are legitimate in reason strings (SEC-NEW-03).
+# C0 controls (0x00..0x1F), DEL (0x7F), and the C1 range (0x80..0x9F),
+# except TAB (0x09) and LF (0x0A) which are legitimate in reason strings
+# (SEC-NEW-03).
+#
+# C1 is stripped because a terminal decoding UTF-8 in 8-bit mode acts on
+# U+009B (CSI) and U+009D (OSC) exactly as it does on the ESC-prefixed
+# 7-bit forms that ``_ANSI_RE`` removes — leaving them intact would let a
+# dependency name or version reposition the cursor or clear the report.
+# U+0085 (NEL) goes with them: it is a control character, and every other
+# non-LF Unicode line break in the C0 block (VT, FF, FS/GS/RS) is already
+# stripped, so LF remains the only surviving line break. The range stops
+# at 0x9F, so U+00A0 (NBSP) and every printable Latin-1 character are
+# preserved.
 _CONTROL_CHARS = "".join(
-    chr(c) for c in range(0, 32) if c not in (0x09, 0x0A)
-) + chr(0x7F)
+    chr(c)
+    for c in (*range(0x00, 0x20), *range(0x7F, 0xA0))
+    if c not in (0x09, 0x0A)
+)
 _CONTROL_TRANSLATE = str.maketrans("", "", _CONTROL_CHARS)
 
 
@@ -107,7 +120,11 @@ def strip_ansi(text: str) -> str:
 
 
 def strip_control_chars(text: str) -> str:
-    """Remove C0/C1 control bytes except TAB and LF (SEC-NEW-03)."""
+    """Remove C0, DEL, and C1 control characters (SEC-NEW-03).
+
+    Strips U+0000–U+001F, U+007F, and U+0080–U+009F, except TAB (U+0009)
+    and LF (U+000A), which are legitimate in reason strings.
+    """
     return text.translate(_CONTROL_TRANSLATE)
 
 

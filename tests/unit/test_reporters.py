@@ -127,6 +127,38 @@ class TestTextReporter:
         assert "\x1b" not in output
         assert "malicious" in output
 
+    @pytest.mark.requirement("SEC-003")
+    @pytest.mark.requirement("SEC-NEW-03")
+    @pytest.mark.security
+    def test_c1_escape_in_dep_name_stripped_from_text(self, text_reporter):
+        """8-bit CSI/OSC (U+009B / U+009D) must not reach the terminal.
+
+        ``_ANSI_RE`` only removes the ESC-prefixed 7-bit forms, so the
+        single-byte C1 equivalents have to be caught by the control-char
+        strip — otherwise a dependency name can clear the screen or forge
+        report text on a terminal that decodes C1 from UTF-8.
+        """
+        result = AnalysisResult(
+            "python",
+            "/tmp",
+            [
+                Dependency(
+                    "\u009b2Jmalicious\u009d0;title",
+                    "1.0",
+                    DependencyStatus.SAFE,
+                    "No usage",
+                    [],
+                    0,
+                    0,
+                )
+            ],
+            [],
+        )
+        output = text_reporter.render(result)
+        for c1 in range(0x80, 0xA0):
+            assert chr(c1) not in output
+        assert "malicious" in output
+
     @pytest.mark.requirement("SEC-NEW-10")
     @pytest.mark.security
     def test_rich_markup_in_dep_name_escaped(self, text_reporter):
