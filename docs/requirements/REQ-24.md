@@ -915,10 +915,10 @@ Implementation: docs/scarno-security-architecture.md is the
 | FR-257 | `SCARNO_INDEX_<ECO>` env vars; dropped under fetch | `tests/unit/test_req24_index_env.py` (TA-327) |
 | FR-258 | User-config `[indexes]` table | `tests/unit/test_req24_index_userconfig.py` (TA-328) |
 | FR-259 | Per-ecosystem override precedence | `tests/unit/test_req24_index_precedence.py` (TA-329) |
-| FR-260 | `--allow-remote-fetch` argv-only; requires `--deep-inspection` | `tests/security/test_req24_allow_remote_fetch_argv_only.py` (TA-330) |
+| FR-260 | `--allow-remote-fetch` argv-only; requires `--deep-inspection`; gates EVERY egress path, including the `mvn dependency:get` POM tier | `tests/security/test_req24_allow_remote_fetch_argv_only.py` (TA-330) + `tests/security/test_req24_no_egress_without_flag.py` |
 | FR-261 | `--integrity-cross-check` argv-only; ≥2 indexes required | `tests/unit/test_req24_cross_check.py` (TA-331) |
 | FR-262 ⚠ superseded by Option 2 | Lazy `find_jar` fetches any cache-miss coord; cache-first ordering replaces the minimisation filter | `tests/integration/test_req24_slice_e_wiring.py::TestLazyFindJarFetchesAnyCoord` + `tests/integration/test_req24_option2_pom_and_jar_fetch.py` |
-| FR-263 | Pre-fetch disclosure line into `result.errors` | `tests/unit/test_req24_disclosure.py` (TA-333) |
+| FR-263 | Pre-fetch disclosure line into `result.errors` — from `RemoteArtifactFetcher` before its first request, and from `MavenPomResolver` before its first `mvn` spawn | `tests/security/test_req24_fetcher.py::TestDisclosureMessage` (TA-333) + `tests/security/test_req24_no_egress_without_flag.py` |
 | FR-264 | Per-attempt structured audit line | `tests/unit/test_req24_audit.py` (TA-334) |
 | FR-265 | `Finding.provenance` field; conservative remote-tagging | `tests/unit/test_req24_provenance.py` (TA-335) |
 | FR-266 | Top-of-report banner when fetches occurred | `tests/unit/test_req24_banner.py` (TA-336) |
@@ -950,9 +950,17 @@ Implementation: docs/scarno-security-architecture.md is the
 ## Acceptance Criteria
 
 - [ ] Given `--allow-remote-fetch` is OFF (default), when analysis
-  runs, then NO outbound network connection is opened regardless
-  of how many indexes are configured (verified via mock
-  `SafeHttpsClient` instance counter — must remain at zero).
+  runs, then NO outbound network connection is opened **by any
+  mechanism**, regardless of how many indexes are configured —
+  verified via a mock `SafeHttpsClient` instance counter AND a
+  subprocess-spawn counter, both of which must remain at zero.
+  A `SafeHttpsClient` counter alone is NOT sufficient: the Maven POM
+  resolver's third tier shells out to `mvn dependency:get`, which
+  fetches over the network and writes into the operator's real
+  `~/.m2/repository` without ever constructing a `SafeHttpsClient`.
+  That tier answers to the same capability gate, emits the FR-263
+  pre-fetch disclosure before its first spawn, and is covered by the
+  same test (`tests/security/test_req24_no_egress_without_flag.py`).
 - [ ] Given `--allow-remote-fetch` is set without
   `--deep-inspection`, when the CLI parses argv, then the process
   exits with code 2 and a sanitised error explaining the

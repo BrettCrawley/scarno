@@ -208,19 +208,37 @@ def _resolve_mvn_binary() -> str | None:
 
 
 def _fetch_pom_via_maven(
-    coords: tuple[str, str, str], errors: list[str]
+    coords: tuple[str, str, str],
+    errors: list[str],
+    *,
+    allow_remote_fetch: bool,
 ) -> Path | None:
-    """Tier 2: download a POM via ``mvn dependency:get`` (FR-132).
+    """Maven CLI tier: download a POM via ``mvn dependency:get`` (FR-132).
+
+    ``mvn dependency:get`` opens outbound connections to whatever
+    repositories the operator's Maven installation resolves (Maven
+    Central by default, or the mirrors named in ``~/.m2/settings.xml``)
+    and writes what it downloads into the operator's real
+    ``~/.m2/repository`` — not the quarantined REQ-24 cache. The
+    coordinates driving it come out of the analysed, possibly hostile,
+    project, so this is network egress in exactly the sense REQ-24's
+    capability gate exists to cover: it is permitted ONLY when the
+    operator passed ``--allow-remote-fetch`` (FR-260 / SEC-NEW-72).
+
+    ``allow_remote_fetch`` is keyword-only and has NO default, so a
+    future call site cannot re-open this egress path by omission —
+    every caller must state the operator's consent explicitly. The
+    caller-side gate in :meth:`MavenPomResolver._locate_or_fetch_pom`
+    returns before reaching here; this check is what keeps the
+    guarantee if that call site is ever bypassed.
 
     On success the POM lands in ``~/.m2/repository`` and is re-read
     through :func:`_locate_pom_in_local_cache`.
-
-    NETWORK CAPABILITY: this spawns Maven, which resolves the given
-    coordinates against a remote repository. Callers MUST NOT reach
-    it unless the operator passed ``--allow-remote-fetch``; the gate
-    lives in :meth:`MavenPomResolver._locate_or_fetch_pom`, the only
-    production call site.
     """
+    if not allow_remote_fetch:
+        # Fail closed: no binary resolution, no spawn, no packets.
+        # UC-081 — the default run completes with zero outbound traffic.
+        return None
     if not _validate_gav(coords):
         return None
     mvn = _resolve_mvn_binary()
@@ -491,10 +509,11 @@ class MavenPomResolver(BaseAnalyser):
     fetcher: object = None  # RemoteArtifactFetcher; typed loosely to
     # avoid an import cycle into the indexing package at module load.
     endpoints: list[Any] = []  # list[IndexEndpoint]
-    # Set once per resolver instance the first time the Maven CLI tier
-    # is suppressed, so the "why didn't this POM resolve?" note appears
-    # exactly once instead of per unresolved coordinate.
-    _cli_tier_note_emitted: bool = False
+    # One-shot report-channel notices. Class-level defaults; the
+    # emitters assign to the *instance*, so each analysis run discloses
+    # once and no state leaks between resolvers.
+    _mvn_disclosure_emitted: bool = False
+    _mvn_gate_notice_emitted: bool = False
 
     def supports(self, project_path: str) -> bool:
         root = Path(project_path)
@@ -560,31 +579,69 @@ class MavenPomResolver(BaseAnalyser):
                     f"{coords[0]}:{coords[1]}: {exc!s}"
                 )
 
-        # Tier 3 — Maven CLI fallback, behind the network capability.
-        # ``mvn dependency:get`` is an outbound artefact download for
-        # coordinates that came from the analysed project's pom.xml,
-        # so it needs the same operator opt-in as the REQ-24 tier
-        # above. Without --allow-remote-fetch this returns None and
-        # the caller degrades exactly as it does on a cache miss.
+        # Tier 3 — Maven CLI fallback. ``mvn dependency:get`` performs
+        # outbound requests from a subprocess (bypassing
+        # ``SafeHttpsClient`` entirely) and writes what it downloads
+        # into the operator's real ~/.m2/repository, driven by
+        # coordinates taken from the analysed — possibly hostile —
+        # project. It is therefore gated on the same argv-only
+        # ``--allow-remote-fetch`` consent as tier 2, so that a run
+        # without the flag completes with zero outbound packets
+        # (REQ-24 UC-081; README "zero network calls happen").
         if not self.allow_remote_fetch:
-            self._note_cli_tier_disabled(errors)
+            self._note_mvn_tier_gated(errors)
             return None
-        return _fetch_pom_via_maven(coords, errors)
+        # FR-263 — disclose on the persistent report channel BEFORE the
+        # first spawn, exactly as RemoteArtifactFetcher does before its
+        # first request.
+        self._disclose_mvn_cli_fetch(errors)
+        return _fetch_pom_via_maven(
+            coords, errors, allow_remote_fetch=self.allow_remote_fetch,
+        )
 
-    def _note_cli_tier_disabled(self, errors: list[str]) -> None:
-        """Record — once per resolver — that the Maven CLI tier was
-        suppressed, so an operator who expected a POM to resolve can
-        tell the difference between "not found" and "not allowed".
+    def _note_mvn_tier_gated(self, errors: list[str]) -> None:
+        """One-shot note explaining why a cache-miss POM was not fetched.
+
+        UC-081 — with the capability gate closed, cache misses surface
+        as sanitised warnings rather than silently triggering a
+        subprocess that talks to the network.
         """
-        if self._cli_tier_note_emitted:
+        if self._mvn_gate_notice_emitted:
             return
-        self._cli_tier_note_emitted = True
+        self._mvn_gate_notice_emitted = True
         errors.append(
-            "maven-cli-fetch: one or more POMs are missing from "
-            "~/.m2/repository and the 'mvn dependency:get' fallback is "
-            "disabled — it would make outbound network calls for "
-            "coordinates read out of the analysed project. Re-run with "
-            "--deep-inspection --allow-remote-fetch to enable it."
+            "req24-fetch: POM(s) missing from ~/.m2/repository were NOT "
+            "fetched — the Maven CLI tier (`mvn dependency:get`) makes "
+            "outbound network requests and writes into ~/.m2/repository, "
+            "so it is gated on --allow-remote-fetch (which itself "
+            "requires --deep-inspection). No mvn fetch was attempted; "
+            "unresolved POMs are skipped."
+        )
+
+    def _disclose_mvn_cli_fetch(self, errors: list[str]) -> None:
+        """FR-263 pre-fetch disclosure for the Maven CLI tier.
+
+        Emitted ONCE into the persistent report channel before the
+        first ``mvn`` spawn, mirroring the disclosure
+        :class:`RemoteArtifactFetcher` emits before its first request —
+        and naming the two ways this tier is weaker: it does not pass
+        through ``SafeHttpsClient``, and it populates the operator's
+        real ``~/.m2/repository`` instead of the quarantined cache.
+        """
+        if self._mvn_disclosure_emitted:
+            return
+        self._mvn_disclosure_emitted = True
+        errors.append(
+            "req24-fetch: REMOTE FETCH ENABLED — about to spawn "
+            "`mvn dependency:get` for POM coordinates read out of the "
+            "analysed project. Maven contacts whatever repositories your "
+            "installation resolves (Maven Central by default, or the "
+            "mirrors named in ~/.m2/settings.xml); your machine's IP "
+            "address will be visible to those hosts, and every artefact "
+            "Maven downloads is written into your real ~/.m2/repository, "
+            "NOT the quarantined REQ-24 cache. This tier does not pass "
+            "through SafeHttpsClient, so its SSRF, pinned-IP, redirect "
+            "and size-cap defences do not apply to it."
         )
 
     def analyse(self, project_path: str) -> AnalysisResult:

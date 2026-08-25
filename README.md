@@ -376,7 +376,7 @@ and there is no path by which a cloned repo can silently turn it on.
 
 | Flag | Effect |
 |------|--------|
-| `--allow-remote-fetch` | The capability gate. Permits outbound HTTPS for cache-miss artefacts. Requires `--deep-inspection`. Without it, configured indexes are validated but **zero network calls happen**. |
+| `--allow-remote-fetch` | The capability gate. Permits outbound HTTPS for cache-miss artefacts, and is also what unlocks the legacy `mvn dependency:get` POM fallback (a Maven subprocess that fetches into your real `~/.m2/repository`, outside the quarantined cache — it announces itself in the report before the first spawn). Requires `--deep-inspection`. Without it, configured indexes are validated but **zero network calls happen** — by any mechanism, subprocess included. |
 | `--allow-private-index-host HOST` | Per-host opt-in to RFC 1918 / ULA addresses. Required when your index is on a private corporate network (`10.x`, `172.16-31.x`, `192.168.x`, `fc00::/7`). Repeatable. Loopback / link-local / CGNAT / multicast / reserved stay blocked. |
 | `--native-tls` | Use the OS-native trust store (macOS Keychain, Windows cert store, Linux NSS) via the `truststore` package, so corporate CAs deployed by your IT team are trusted. Cert verification + hostname check remain mandatory. |
 | `--integrity-cross-check` | Opt-in adversarial-integrity check. When ≥2 indexes are configured for an ecosystem, each artefact is fetched from the top-2 and bytes compared (with a single jittered retry to absorb CDN replica drift). Persistent disagreement → `TS-INTEGRITY-MISMATCH` (HIGH). Doubles per-artefact fetch volume. |

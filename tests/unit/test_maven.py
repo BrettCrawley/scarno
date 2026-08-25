@@ -554,7 +554,9 @@ class TestMavenCliFallback:
         monkeypatch.setattr(maven_mod, "_resolve_mvn_binary", lambda: "/usr/bin/mvn")
         monkeypatch.setattr(subprocess, "run", mock_run)
         errors: list[str] = []
-        result = _fetch_pom_via_maven(coords, errors)
+        result = _fetch_pom_via_maven(
+            coords, errors, allow_remote_fetch=True
+        )
         assert result is not None
         assert result.name == "fetched-parent-2.0.pom"
 
@@ -570,7 +572,8 @@ class TestMavenCliFallback:
         )
         errors: list[str] = []
         result = _fetch_pom_via_maven(
-            ("com.example", "slow", "1.0"), errors
+            ("com.example", "slow", "1.0"), errors,
+            allow_remote_fetch=True,
         )
         assert result is None
         assert any("timeout" in e.lower() or "os error" in e.lower() for e in errors)
@@ -585,7 +588,8 @@ class TestMavenCliFallback:
         )
         errors: list[str] = []
         result = _fetch_pom_via_maven(
-            ("com.example", "missing", "1.0"), errors
+            ("com.example", "missing", "1.0"), errors,
+            allow_remote_fetch=True,
         )
         assert result is None
         assert any("exited with code 1" in e for e in errors)
@@ -600,7 +604,8 @@ class TestMavenCliFallback:
         monkeypatch.setattr(subprocess, "run", raise_oserror)
         errors: list[str] = []
         result = _fetch_pom_via_maven(
-            ("com.example", "broken", "1.0"), errors
+            ("com.example", "broken", "1.0"), errors,
+            allow_remote_fetch=True,
         )
         assert result is None
 
@@ -616,8 +621,41 @@ class TestMavenCliFallback:
             lambda *a, **kw: called.append("called"),
         )
         errors: list[str] = []
-        _fetch_pom_via_maven(("../../../etc", "passwd", "1.0"), errors)
+        _fetch_pom_via_maven(
+            ("../../../etc", "passwd", "1.0"), errors,
+            allow_remote_fetch=True,
+        )
         assert called == []
+
+    @pytest.mark.requirement("FR-260")
+    @pytest.mark.requirement("SEC-NEW-72")
+    @pytest.mark.security
+    def test_no_spawn_without_allow_remote_fetch(self, monkeypatch):
+        """The CLI tier fails closed without the operator's consent.
+
+        ``mvn dependency:get`` is outbound network access driven by
+        coordinates from the analysed repo. With ``allow_remote_fetch``
+        False it must not resolve a binary, spawn a process, or emit a
+        packet — even for perfectly valid GAV coordinates.
+        """
+        spawned: list[object] = []
+        monkeypatch.setattr(
+            maven_mod,
+            "_resolve_mvn_binary",
+            lambda: pytest.fail(
+                "mvn binary resolved without --allow-remote-fetch"
+            ),
+        )
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **kw: spawned.append(a),
+        )
+        errors: list[str] = []
+        result = _fetch_pom_via_maven(
+            ("com.example", "lib", "1.0"), errors,
+            allow_remote_fetch=False,
+        )
+        assert result is None
+        assert spawned == []
 
 
 # ── BOM resolution ─���────────────────────────���──────────────────────────────

@@ -136,8 +136,11 @@ class TestPomFetchInResolver:
         )
         cli_called: list[tuple[str, ...]] = []
 
-        def _fake_cli(coords, errors):
+        def _fake_cli(coords, errors, *, allow_remote_fetch):
+            # The helper is fail-closed and keyword-only; record the
+            # consent it was handed so a silent re-open would show up.
             cli_called.append(coords)
+            assert allow_remote_fetch is True
             return None
 
         monkeypatch.setattr(
@@ -169,7 +172,7 @@ class TestPomFetchInResolver:
         )
         cli_called: list[tuple[str, ...]] = []
 
-        def _fake_cli(coords, errors):
+        def _fake_cli(coords, errors, *, allow_remote_fetch):
             cli_called.append(coords)
             return None
 
@@ -189,13 +192,13 @@ class TestPomFetchInResolver:
         assert cli_called == [], (
             "mvn dependency:get spawned without --allow-remote-fetch"
         )
-        assert any("maven-cli-fetch" in e for e in errors)
+        assert any("were NOT fetched" in e for e in errors), errors
 
         # The explanatory note is emitted once, not per coordinate.
         resolver._locate_or_fetch_pom(
             ("com.example", "other", "2.0"), errors,
         )
-        assert sum("maven-cli-fetch" in e for e in errors) == 1
+        assert sum("were NOT fetched" in e for e in errors) == 1, errors
 
     @pytest.mark.parametrize("capability", [False, True])
     def test_java_analyser_forwards_capability_to_resolver(
