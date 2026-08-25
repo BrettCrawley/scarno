@@ -15,6 +15,7 @@ Tested contracts:
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -201,3 +202,101 @@ class TestMarkdownDefaultEndToEnd:
         assert not (tmp_path / "demo-analysis-report.md").exists()
         # JSON content lands on stdout as before.
         assert result.output.lstrip().startswith("{")
+
+
+@pytest.mark.security
+@pytest.mark.performance
+class TestPomNameRedosRegression:
+    """``_read_pom_xml_name`` must stay linear on hostile pom.xml text.
+
+    The name/artifactId patterns used to be ``<tag>\\s*([^<]+?)\\s*</tag>``,
+    where the leading ``\\s*``, the lazy ``[^<]+?`` and the trailing
+    ``\\s*`` could all match the same whitespace characters. A ``<name>``
+    token that never closes — trivially achieved inside an XML comment,
+    which keeps the document well-formed so the Maven analyser still
+    parses it — made the search backtrack cubically over an
+    attacker-controlled whitespace run and the scan never finished.
+    """
+
+    # Comfortably under the 1 MiB _MANIFEST_MAX_BYTES read cap, so these
+    # tests exercise the matcher itself rather than the size guard.
+    PAYLOAD_WHITESPACE_BYTES = 200_000
+
+    def _write_hostile_pom(self, tmp_path: Path) -> Path:
+        from scarno.cli import _MANIFEST_MAX_BYTES
+
+        pom = tmp_path / "pom.xml"
+        # Well-formed XML: the <name> token lives inside a comment, so it
+        # is never closed by a real </name>.
+        pom.write_text(
+            "<project><artifactId>safe-art</artifactId>"
+            "<!-- <name>" + " " * self.PAYLOAD_WHITESPACE_BYTES
+            + "--></project>",
+        )
+        assert pom.stat().st_size < _MANIFEST_MAX_BYTES, (
+            "payload must stay under the read cap or the cap, not the "
+            "regex fix, is what makes this test pass"
+        )
+        return pom
+
+    def test_unclosed_name_token_does_not_hang(self, tmp_path):
+        """The headline regression.
+
+        Against the old ambiguous pattern this payload needs on the
+        order of 1e11 backtracking steps (measured: 400 whitespace
+        bytes already cost 30 ms and the cost is cubic, so 200 KB is
+        many hours). With the possessive ``[^<]++`` capture the whole
+        derivation completes in well under a millisecond.
+        """
+        self._write_hostile_pom(tmp_path)
+        start = time.monotonic()
+        name = _derive_project_name(tmp_path)
+        elapsed = time.monotonic() - start
+        assert elapsed < 2.0, (
+            f"pom name derivation took {elapsed:.2f}s — the <name> "
+            f"pattern is backtracking again"
+        )
+        # And it still produces the right answer: no usable <name>, so
+        # the <artifactId> fallback wins.
+        assert name == "safe-art"
+
+    def test_unclosed_artifact_id_token_does_not_hang(self, tmp_path):
+        """Same shape on the ``<artifactId>`` fallback pattern, which is
+        only reached when no ``<name>`` matched."""
+        pom = tmp_path / "pom.xml"
+        pom.write_text(
+            "<project><!-- <artifactId>"
+            + " " * self.PAYLOAD_WHITESPACE_BYTES
+            + "--></project>",
+        )
+        start = time.monotonic()
+        name = _derive_project_name(tmp_path)
+        elapsed = time.monotonic() - start
+        assert elapsed < 2.0, (
+            f"pom artifactId derivation took {elapsed:.2f}s — the "
+            f"<artifactId> pattern is backtracking again"
+        )
+        # Nothing derivable from this pom and no other manifest.
+        assert name is None
+
+    def test_surrounding_whitespace_is_still_trimmed(self, tmp_path):
+        """Behaviour guard for the rewrite.
+
+        The old pattern trimmed padding via its edge ``\\s*`` groups; the
+        new one captures the raw run and relies on the existing
+        ``.strip()``. Both must yield the same name.
+        """
+        (tmp_path / "pom.xml").write_text(
+            "<project><artifactId>my-art</artifactId>"
+            "<name>\n    My Human Readable Name  \t\n</name>"
+            "</project>",
+        )
+        assert _derive_project_name(tmp_path) == "My Human Readable Name"
+
+    def test_blank_name_element_falls_back_to_artifact_id(self, tmp_path):
+        """A whitespace-only <name> strips to empty and must not win."""
+        (tmp_path / "pom.xml").write_text(
+            "<project><artifactId>my-art</artifactId>"
+            "<name>   </name></project>",
+        )
+        assert _derive_project_name(tmp_path) == "my-art"

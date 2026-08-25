@@ -453,11 +453,25 @@ def _read_pom_xml_name(path: Path) -> str | None:
     import re as _re
     # Prefer the human-readable <name>; fall back to <artifactId>.
     # Strip Maven namespaces so we don't have to commit to a parser.
-    name_match = _re.search(r"<name>\s*([^<]+?)\s*</name>", text)
+    #
+    # ReDoS defence (CWE-1333): these patterns must stay unambiguous.
+    # The earlier form ``<name>\s*([^<]+?)\s*</name>`` let the leading
+    # \s*, the lazy [^<]+? and the trailing \s* all match the SAME
+    # whitespace characters, so a <name> token never closed before EOF
+    # (e.g. inside an XML comment) drove ~O(n^3) backtracking over an
+    # attacker-controlled whitespace run — 400 bytes already cost 30 ms,
+    # so the 1 MiB _safe_read_text budget hung the process indefinitely.
+    # The capture is now a single possessive run of non-'<' characters:
+    # nothing else in the pattern can match those bytes, and '<' is
+    # excluded from the class, so no backtracking is possible and the
+    # match is linear in the file size (1 MiB ≈ 0.3 ms). The trailing
+    # .strip() below reproduces exactly what the old edge \s* groups
+    # trimmed, so accepted input and returned names are unchanged.
+    name_match = _re.search(r"<name>([^<]++)</name>", text)
     if name_match and name_match.group(1).strip():
         return name_match.group(1).strip()
     art_match = _re.search(
-        r"<artifactId>\s*([^<]+?)\s*</artifactId>", text,
+        r"<artifactId>([^<]++)</artifactId>", text,
     )
     if art_match and art_match.group(1).strip():
         return art_match.group(1).strip()
