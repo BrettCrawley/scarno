@@ -165,9 +165,18 @@ runs:
         # and a repo that plants its own ``scarno.json`` (file or directory)
         # at the root could otherwise feed us a forged report, or make the
         # write fail — and a failed scan must never read as a clean one.
-        TS_REPORT_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+        # A private 0700 directory with an unguessable name, created fresh
+        # by mktemp -d. A fixed name under a shared temp dir would be
+        # predictable, and on a self-hosted runner /tmp is world-writable:
+        # another local user could pre-create the path, or win the race
+        # between removing it and scarno writing, and substitute the
+        # report this step then trusts. mktemp -d both fails if it cannot
+        # create the directory and refuses to reuse an existing one, so
+        # there is no window to lose.
+        TS_REPORT_DIR="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/scarno-action.XXXXXXXXXX")"
+        chmod 700 "${TS_REPORT_DIR}"
+        trap 'rm -rf "${TS_REPORT_DIR}"' EXIT
         TS_JSON="${TS_REPORT_DIR}/scarno-action-report.json"
-        rm -f "${TS_JSON}"
         # scarno confines --output to the cwd when the cwd IS the analysed
         # project, so the scan runs from the report directory and is handed
         # the absolute path of the tree to analyse.

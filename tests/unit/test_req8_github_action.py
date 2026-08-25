@@ -260,6 +260,29 @@ class TestCollectFailsClosed:
         )
 
     @pytest.mark.requirement("FR-093")
+    def test_report_dir_is_private_and_unpredictable(self):
+        """A fixed filename under a shared temp dir is predictable, and
+        on a self-hosted runner /tmp is world-writable — another local
+        user could pre-create the path or win the race against the write
+        and substitute the report this step then trusts. The directory
+        must be created by mktemp -d, restricted to the owner, and
+        removed on exit.
+        """
+        text = (_REPO_ROOT / "action.yml").read_text()
+        assert "mktemp -d" in text, (
+            "the report directory must be created by mktemp -d, not "
+            "assembled from a fixed name"
+        )
+        assert "chmod 700" in text
+        assert 'trap ' in text and "rm -rf" in text, (
+            "the scratch directory must be cleaned up when the step exits"
+        )
+        # The old fixed-path form must not come back.
+        assert '="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"' not in text, (
+            "report dir is a fixed path again"
+        )
+
+    @pytest.mark.requirement("FR-093")
     def test_unexpected_exit_code_fails_the_step(self):
         """0/1/3 are scarno's documented outcomes. 2 (analysis failed) or
         any crash means there is no trustworthy verdict."""
