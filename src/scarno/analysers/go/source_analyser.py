@@ -30,6 +30,7 @@ from pathlib import Path
 
 import re
 
+from scarno.analysers.name_counts import MAX_FULL_SCANS, count_selector_refs
 from scarno.models import Dependency, DependencyStatus, EntryPoint
 from scarno.security import MAX_FILE_BYTES, PathEscapeError, resolve_and_confine
 
@@ -269,24 +270,36 @@ def _scan_file(
     pre_imports = set(facts.imports)
     _walk_imports(tree.root_node, facts, is_test)
     # REQ-17 / FR-150 — for each newly-seen import in this file, count
-    # selector references (``<lastSegment>.Foo``). The regex is bounded
-    # to validated Go identifiers to keep pattern building safe.
+    # selector references (``<lastSegment>.Foo``). Counting is bounded to
+    # validated Go identifiers to keep pattern building safe, and every
+    # name is tallied in one pass over the file's identifier tokens —
+    # scanning the whole file once per import was quadratic, so a crafted
+    # import-packed file never finished (CWE-1333).
     new_imports = facts.imports - pre_imports
     if new_imports:
         try:
             text = source.decode("utf-8", errors="replace")
         except Exception:  # noqa: BLE001
             text = ""
+        pairs: list[tuple[str, str]] = []
         for imp in new_imports:
             last = imp.rsplit("/", 1)[-1]
             facts._last_segment_index.setdefault(last, imp)
-            if _GO_PKG_NAME_RE.match(last):
-                # `\bpkg\.` matches ``errors.``-prefixed selectors.
-                n = len(re.findall(rf"\b{re.escape(last)}\.", text))
-            else:
-                n = 0
+            pairs.append((imp, last))
+        # `\bpkg\.` matches ``errors.``-prefixed selectors.
+        counts, uncounted = count_selector_refs(
+            text, [last for _, last in pairs if _GO_PKG_NAME_RE.match(last)]
+        )
+        for imp, last in pairs:
+            n = counts.get(last, 0)
             facts.import_counts[imp] = (
                 facts.import_counts.get(imp, 0) + max(n, 1)
+            )
+        if uncounted:
+            errors.append(
+                f"go source: reference counting capped at {MAX_FULL_SCANS} "
+                f"unusual import names in {filename} — {len(uncounted)} more "
+                f"counted as a single reference each"
             )
 
 

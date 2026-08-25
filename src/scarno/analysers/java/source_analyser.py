@@ -73,6 +73,7 @@ from scarno.analysers.java.maven import (
     _m2_repo_path,
     _validate_gav,
 )
+from scarno.analysers.name_counts import MAX_FULL_SCANS, count_boundary_refs
 from scarno.core.base_analyser import BaseAnalyser
 from scarno.models import AnalysisResult, Dependency, DependencyStatus, EntryPoint
 from scarno.security import (
@@ -346,7 +347,7 @@ class JvmSourceAnalyser(BaseAnalyser):
         # REQ-6b — prefer AST extraction; fall back to regex per-file when
         # tree-sitter isn't available for that language.
         for text, language in source_items:
-            facts = self._extract_facts(text, language)
+            facts = self._extract_facts(text, language, errors)
             import_paths |= facts.imports
             annotations |= facts.annotations
             reflective_literals |= facts.reflective_literals
@@ -579,7 +580,9 @@ class JvmSourceAnalyser(BaseAnalyser):
                 out.append((text, language))
         return out
 
-    def _extract_facts(self, text: str, language: str) -> ExtractedFacts:
+    def _extract_facts(
+        self, text: str, language: str, errors: list[str] | None = None
+    ) -> ExtractedFacts:
         """Extract facts via tree-sitter AST if available; otherwise regex.
 
         The regex fallback is the Phase 2 path — a known-fragile approach
@@ -589,27 +592,40 @@ class JvmSourceAnalyser(BaseAnalyser):
         if AST_AVAILABLE:
             try:
                 if language == "java":
-                    return extract_java(text)
+                    return extract_java(text, errors=errors)
                 if language == "kotlin":
-                    return extract_kotlin(text)
+                    return extract_kotlin(text, errors=errors)
             except Exception:  # noqa: BLE001 — any grammar error → fallback
                 pass
         # Regex-fallback path — also populate import_counts so Java/Kotlin
-        # entry-point counts work even without tree-sitter wheels.
+        # entry-point counts work even without tree-sitter wheels. Counts
+        # come from one pass over the file's identifier tokens; a scan per
+        # import made a crafted, import-packed file quadratic (CWE-1333).
         imports = _extract_imports(text)
         facts = ExtractedFacts(
             imports=imports,
             annotations=_extract_annotations(text),
             reflective_literals=_extract_reflective_classnames(text),
         )
-        for fqcn in imports:
-            simple = fqcn.rsplit(".", 1)[-1]
-            if not re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", simple):
-                facts.import_counts[fqcn] = facts.import_counts.get(fqcn, 0) + 1
-                continue
-            n = len(re.findall(rf"\b{re.escape(simple)}\b", text))
+        pairs = [(fqcn, fqcn.rsplit(".", 1)[-1]) for fqcn in imports]
+        counts, uncounted = count_boundary_refs(
+            text,
+            [
+                simple
+                for _, simple in pairs
+                if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", simple)
+            ],
+        )
+        for fqcn, simple in pairs:
+            n = counts.get(simple, 0)
             facts.import_counts[fqcn] = (
                 facts.import_counts.get(fqcn, 0) + max(n, 1)
+            )
+        if uncounted and errors is not None:
+            errors.append(
+                f"jvm_source_analyser: reference counting capped at "
+                f"{MAX_FULL_SCANS} unusual import names — "
+                f"{len(uncounted)} more counted as a single reference each"
             )
         return facts
 

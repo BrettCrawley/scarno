@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from scarno.analysers.name_counts import MAX_FULL_SCANS, count_boundary_refs
 from scarno.models import Dependency, DependencyStatus, EntryPoint
 from scarno.security import MAX_FILE_BYTES, PathEscapeError, resolve_and_confine
 
@@ -223,26 +224,34 @@ def _scan_cs_file(
     _walk_usings(tree.root_node, facts)
     # REQ-17 / FR-150 — for namespaces newly seen in this file, augment
     # the count by the number of word-boundary references to the
-    # namespace's last segment in the file's source. Bounds the regex
+    # namespace's last segment in the file's source. Bounds the counting
     # to validated identifiers so attacker-controlled namespace text
-    # cannot inject regex metacharacters.
+    # cannot inject regex metacharacters, and tallies every name in one
+    # pass over the file's identifier tokens — scanning the whole file
+    # once per ``using`` was quadratic, so a crafted file packed with
+    # distinct namespaces never finished (CWE-1333).
     new_in_file = facts.namespaces - pre_namespaces
     if new_in_file:
         try:
             text = source_bytes.decode("utf-8", errors="replace")
         except Exception:  # noqa: BLE001
             text = ""
-        for ns in new_in_file:
-            simple = ns.rsplit(".", 1)[-1]
-            if _CS_SIMPLE_NAME.match(simple):
-                n = len(re.findall(rf"\b{re.escape(simple)}\b", text))
-                facts.namespace_counts[ns] = (
-                    facts.namespace_counts.get(ns, 0) + max(n, 1)
-                )
-            else:
-                facts.namespace_counts[ns] = (
-                    facts.namespace_counts.get(ns, 0) + 1
-                )
+        pairs = [(ns, ns.rsplit(".", 1)[-1]) for ns in new_in_file]
+        counts, uncounted = count_boundary_refs(
+            text, [s for _, s in pairs if _CS_SIMPLE_NAME.match(s)]
+        )
+        for ns, simple in pairs:
+            n = counts.get(simple, 0)
+            facts.namespace_counts[ns] = (
+                facts.namespace_counts.get(ns, 0) + max(n, 1)
+            )
+        if uncounted:
+            errors.append(
+                f"csharp source: reference counting capped at "
+                f"{MAX_FULL_SCANS} unusual namespace names in "
+                f"{resolved.name} — {len(uncounted)} more counted as a "
+                f"single reference each"
+            )
 
 
 def _walk_usings(node, facts: _Facts) -> None:  # type: ignore[no-untyped-def]

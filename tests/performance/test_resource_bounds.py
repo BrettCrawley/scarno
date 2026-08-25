@@ -419,3 +419,90 @@ class TestCsharpMemoryBounds:
         # Must not crash — XML parser handles deep nesting gracefully
         deps, errors, _ = parse_all_csharp_dependency_files(str(tmp_path))
         assert isinstance(deps, list)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Import-reference counting must stay linear in file size (CWE-1333)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestImportCountComplexity:
+    """REQ-17 / FR-150 counts every import's simple-name references.
+
+    Doing that with one full-file regex scan *per import* is quadratic:
+    a single source file packed with distinct imports — well inside
+    ``MAX_FILE_BYTES`` — pinned a CPU for hours and the scan never
+    returned. Each file below takes under a second once the counting is
+    a single pass; it took tens of seconds per file before.
+    """
+
+    @pytest.mark.requirement("D-04")
+    @pytest.mark.requirement("FR-150")
+    def test_java_file_packed_with_imports_counts_fast(self):
+        import sys
+
+        from scarno.analysers.java.ast_extractor import AST_AVAILABLE, extract_java
+
+        if not AST_AVAILABLE:
+            pytest.skip("tree-sitter grammars unavailable")
+        n = 20_000
+        source = (
+            "".join(f"import p{i}.C{i};\n" for i in range(n))
+            + "public class Big { }\n"
+        )
+        before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        start = time.monotonic()
+        facts = extract_java(source)
+        elapsed = time.monotonic() - start
+        after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        assert len(facts.import_counts) == n
+        assert elapsed < 5.0, f"{n} distinct imports took {elapsed:.1f}s"
+        # macOS reports bytes; Linux reports KB
+        divisor = 1024 * 1024 if sys.platform == "darwin" else 1024
+        delta_mb = (after - before) / divisor
+        assert delta_mb < 100, f"Memory increased by {delta_mb:.1f} MB"
+
+    @pytest.mark.requirement("D-04")
+    @pytest.mark.requirement("FR-150")
+    def test_go_file_packed_with_imports_counts_fast(self):
+        from scarno.analysers.go import source_analyser as go_sa
+
+        if not go_sa.GO_AST_AVAILABLE:
+            pytest.skip("tree-sitter-go unavailable")
+        n = 10_000
+        source = (
+            "package main\n\nimport (\n"
+            + "".join(f'    p{i} "example.com/m{i}/pkg{i}"\n' for i in range(n))
+            + ")\n\nfunc main() {}\n"
+        )
+        facts = go_sa._Facts()
+        errors: list[str] = []
+        start = time.monotonic()
+        go_sa._scan_file(
+            source.encode("utf-8"), facts, errors, "main.go", ("main.go",)
+        )
+        elapsed = time.monotonic() - start
+        assert len(facts.import_counts) == n
+        assert elapsed < 5.0, f"{n} distinct imports took {elapsed:.1f}s"
+
+    @pytest.mark.requirement("D-04")
+    @pytest.mark.requirement("FR-150")
+    def test_csharp_file_packed_with_usings_counts_fast(self, tmp_path):
+        from scarno.analysers.csharp import source_analyser as cs_sa
+
+        if not cs_sa.CSHARP_AST_AVAILABLE:
+            pytest.skip("tree-sitter-c-sharp unavailable")
+        n = 20_000
+        source = (
+            "".join(f"using N{i}.S{i};\n" for i in range(n))
+            + "class P { static void Main() {} }\n"
+        )
+        path = tmp_path / "P.cs"
+        path.write_text(source)
+        facts = cs_sa._Facts()
+        errors: list[str] = []
+        start = time.monotonic()
+        cs_sa._scan_cs_file(path, tmp_path, facts, errors)
+        elapsed = time.monotonic() - start
+        assert len(facts.namespace_counts) == n
+        assert elapsed < 5.0, f"{n} distinct usings took {elapsed:.1f}s"

@@ -32,6 +32,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from scarno.analysers.name_counts import MAX_FULL_SCANS, count_boundary_refs
+
 # Try to import the grammars; fall back quietly if unavailable.
 try:  # pragma: no cover — import-time path varies by host
     import tree_sitter as _ts
@@ -118,14 +120,20 @@ def _join_scoped_identifier(node: "_ts.Node") -> str:
 # ── Java extractor ──────────────────────────────────────────────────────────
 
 
-def extract_java(source: str, file_path: str = "") -> ExtractedFacts:
-    """Extract imports, annotations, reflective literals from Java source."""
+def extract_java(
+    source: str, file_path: str = "", errors: list[str] | None = None
+) -> ExtractedFacts:
+    """Extract imports, annotations, reflective literals from Java source.
+
+    ``errors``, when supplied, receives any note the extractor needs to
+    surface to the user (see :func:`_populate_import_counts`).
+    """
     facts = ExtractedFacts(file_path=file_path)
     if _JAVA_PARSER is None:
         return facts
     tree = _JAVA_PARSER.parse(source.encode("utf-8"))
     _walk_java(tree.root_node, facts)
-    _populate_import_counts(source, facts)
+    _populate_import_counts(source, facts, errors)
     return facts
 
 
@@ -135,26 +143,45 @@ def extract_java(source: str, file_path: str = "") -> ExtractedFacts:
 _JAVA_SIMPLE_NAME = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 
 
-def _populate_import_counts(source: str, facts: ExtractedFacts) -> None:
+def _populate_import_counts(
+    source: str, facts: ExtractedFacts, errors: list[str] | None = None
+) -> None:
     """REQ-17 / FR-150 — populate per-FQCN reference counts.
 
     Each ``import X.Y.Z;`` contributes 1 for the FQCN. We then count
     word-boundary occurrences of the simple name ``Z`` across the
-    source. The regex is built only when the simple name passes a
-    strict identifier check, so the grammar token never escapes from a
-    crafted import path.
+    source. Names are only counted when they pass a strict identifier
+    check, so the grammar token never escapes from a crafted import
+    path.
+
+    All those counts come out of a **single** pass over the file's
+    identifier tokens (:mod:`scarno.analysers.name_counts`). Scanning
+    the whole file once per import was quadratic, so a crafted file
+    packed with distinct imports never finished (CWE-1333). A simple
+    name holding a non-word character (``$``) still needs its own scan;
+    past :data:`~scarno.analysers.name_counts.MAX_FULL_SCANS` of those
+    in one file the remainder keep the bare import count of 1 and the
+    shortfall is reported through ``errors``.
     """
-    for fqcn in facts.imports:
-        # Strip the import-static `X.Y.method` suffix marker — for our
-        # purposes the simple name is the last dotted segment.
-        simple = fqcn.rsplit(".", 1)[-1]
-        if not _JAVA_SIMPLE_NAME.match(simple):
-            facts.import_counts[fqcn] = facts.import_counts.get(fqcn, 0) + 1
-            continue
-        pattern = re.compile(rf"\b{re.escape(simple)}\b")
+    # Strip the import-static `X.Y.method` suffix marker — for our
+    # purposes the simple name is the last dotted segment.
+    pairs = [(fqcn, fqcn.rsplit(".", 1)[-1]) for fqcn in facts.imports]
+    counts, uncounted = count_boundary_refs(
+        source, [s for _, s in pairs if _JAVA_SIMPLE_NAME.match(s)]
+    )
+    for fqcn, simple in pairs:
         # 1 for the import itself + 1 for every additional reference.
-        n = len(pattern.findall(source))
+        # A name we could not count (not an identifier, or past the
+        # scan cap) falls back to that bare 1.
+        n = counts.get(simple, 0)
         facts.import_counts[fqcn] = facts.import_counts.get(fqcn, 0) + max(n, 1)
+    if uncounted and errors is not None:
+        where = f" in {facts.file_path}" if facts.file_path else ""
+        errors.append(
+            f"jvm_source_analyser: reference counting capped at "
+            f"{MAX_FULL_SCANS} unusual import names{where} — "
+            f"{len(uncounted)} more counted as a single reference each"
+        )
 
 
 def _walk_java(node: "_ts.Node", facts: ExtractedFacts) -> None:
@@ -430,13 +457,15 @@ def _extract_string_literal_text(node: "_ts.Node") -> str:
 # ── Kotlin extractor ────────────────────────────────────────────────────────
 
 
-def extract_kotlin(source: str, file_path: str = "") -> ExtractedFacts:
+def extract_kotlin(
+    source: str, file_path: str = "", errors: list[str] | None = None
+) -> ExtractedFacts:
     facts = ExtractedFacts(file_path=file_path)
     if _KOTLIN_PARSER is None:
         return facts
     tree = _KOTLIN_PARSER.parse(source.encode("utf-8"))
     _walk_kotlin(tree.root_node, facts)
-    _populate_import_counts(source, facts)
+    _populate_import_counts(source, facts, errors)
     return facts
 
 
