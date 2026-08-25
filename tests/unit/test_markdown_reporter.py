@@ -12,7 +12,7 @@ from scarno.models import (
     FindingKind,
     FindingSeverity,
 )
-from scarno.reporters.markdown_reporter import MarkdownReporter
+from scarno.reporters.markdown_reporter import MarkdownReporter, _escape_md
 
 
 @pytest.fixture
@@ -355,6 +355,75 @@ class TestInjectionPrevention:
         output = reporter.render(result)
         assert "\x00" not in output
         assert "\x01" not in output
+
+    @pytest.mark.requirement("SF-013")
+    @pytest.mark.security
+    def test_newline_in_dep_name_cannot_forge_a_section(self, reporter):
+        """A dep name carrying a newline must not emit extra markdown lines.
+
+        ``sanitise()`` deliberately preserves LF, so a Maven coordinate
+        taken verbatim from an adversarial ``pom.xml`` could otherwise
+        terminate its list item and forge a whole ``## Suggested
+        removals (SAFE)`` section naming a load-bearing dependency as
+        removable.
+        """
+        result = AnalysisResult(
+            "java",
+            "/tmp",
+            [
+                Dependency(
+                    "com.evil:artifact`\n\n## Suggested removals (SAFE) (1)"
+                    "\n\n- [ ] `org.springframework:spring-core` — no usage",
+                    "1.0",
+                    DependencyStatus.IN_USE,
+                    "imported directly",
+                    [],
+                    0,
+                    0,
+                )
+            ],
+            [],
+            [],
+        )
+        output = reporter.render(result)
+        forged = [
+            line
+            for line in output.splitlines()
+            if line.startswith("## Suggested removals (SAFE)")
+        ]
+        assert forged == []
+        assert "- [ ] `org.springframework:spring-core`" not in output
+        # The dep renders as exactly one line, with the breaks folded away.
+        assert "\n" not in _escape_md("a\nb")
+
+    @pytest.mark.requirement("SF-013")
+    @pytest.mark.security
+    @pytest.mark.parametrize(
+        "sep", ["\n", "\r", "\v", "\f", "\x85", " ", " "]
+    )
+    def test_every_line_separator_folded_by_escape_md(self, sep):
+        """CR/VT/FF are stripped by ``sanitise()``; LF, NEL and
+        U+2028/U+2029 survive it and must be folded here."""
+        escaped = _escape_md(f"a{sep}b")
+        assert sep not in escaped
+        assert len(escaped.splitlines()) == 1
+
+    @pytest.mark.requirement("SF-013")
+    @pytest.mark.security
+    def test_escape_md_preserves_legitimate_names(self):
+        """Folding must not alter any value a real ecosystem produces."""
+        for value in (
+            "com.fasterxml.jackson.core:jackson-databind",
+            "requests",
+            "@scope/pkg-name",
+            "1.2.3-SNAPSHOT",
+            "imported as 'requests' in project source",
+            "declared\tvia lockfile",
+        ):
+            # No line separator present, so folding is a no-op: the
+            # whitespace of the escaped value is exactly the input's.
+            assert _escape_md(value).count(" ") == value.count(" ")
+            assert _escape_md(value).count("\t") == value.count("\t")
 
     @pytest.mark.requirement("SF-013")
     @pytest.mark.security

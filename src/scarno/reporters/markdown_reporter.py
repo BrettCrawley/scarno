@@ -34,7 +34,10 @@ Safety:
   * User-derived strings pass through ``sanitise()`` (SEC-003, SEC-NEW-03).
   * Markdown-active characters (``|``, `` ` ``, ``*``, ``_``, ``[``,
     ``]``) in dep names / reasons / snippets are escaped so adversarial
-    values cannot inject headings, tables, or code blocks.
+    values cannot inject headings, tables, or code blocks; line
+    separators (LF, NEL, U+2028, U+2029, …) are folded to spaces so a
+    value cannot terminate the list item it is rendered in and emit
+    markdown lines of its own.
   * Mermaid label text is hardened against injection: ``]``, ``[``, ``"``,
     newline, backslash, ANSI/control chars are escaped; reserved tokens
     (``subgraph``, ``classDef``, ``linkStyle``, ``style``, ``end``) are
@@ -89,9 +92,30 @@ _SEVERITY_ORDER: dict[FindingSeverity, int] = {
 }
 
 
+# Every character a markdown renderer (or a terminal) treats as a line
+# break, folded to a single space so a user-derived value can never
+# terminate the line it is rendered on. ``sanitise()`` already strips
+# CR / VT / FF / FS / GS / RS, but LF, NEL (U+0085), U+2028 and U+2029
+# survive it by design — they are listed here regardless so this helper
+# stays correct independently of what ``sanitise()`` removes. TAB is
+# deliberately absent: it is not a line break and is legitimate inside
+# reason strings (SEC-NEW-03).
+_LINE_BREAK_TRANSLATE = {
+    ord(ch): " "
+    for ch in (
+        "\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e",
+        "\x85", " ", " ",
+    )
+}
+
+
 def _escape_md(text: str) -> str:
     """Escape the markdown-active characters that matter inside list items."""
     sanitised = sanitise(text)
+    # Fold line separators to spaces — an embedded newline would otherwise
+    # end the current list item and let the value emit arbitrary markdown
+    # lines (forged headings, checklist entries) of its own.
+    sanitised = sanitised.translate(_LINE_BREAK_TRANSLATE)
     # Backslash first — the rest of the replacements introduce backslashes.
     out = sanitised.replace("\\", "\\\\")
     for ch in ("|", "`", "*", "_", "[", "]", "<", ">"):
