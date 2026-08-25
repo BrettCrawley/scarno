@@ -1204,13 +1204,50 @@ class MavenPomResolver(BaseAnalyser):
                     f"({parent_sandbox}); blocked"
                 )
                 return None
+            # The name check judges the path as the PROJECT lays it out,
+            # never the symlink's target: a monorepo that links
+            # ``pom.xml`` to ``../shared/parent-pom.xml`` is a benign
+            # layout, and resolving first would reject it.
             if candidate.name != "pom.xml":
                 errors.append(
                     f"Parent POM not found for {data.artifact_id}: {label} — "
                     f"relativePath '{relative}' does not point to a pom.xml"
                 )
                 return None
-            if candidate.exists():
+            # Regular files only. ``exists()`` is true for a FIFO named
+            # ``pom.xml``, and parsing one blocks forever with no writer,
+            # so an in-tree FIFO hung the whole analysis. A directory or
+            # device node is no more parseable. A dangling symlink is
+            # false here just as it was for ``exists()``, so it stays a
+            # miss and keeps falling through.
+            if candidate.is_file():
+                # SEC-002 — confining the DIRECTORY is not enough. The
+                # resolve() above ran before ``pom.xml`` was appended, so
+                # a pom.xml sitting inside a legitimately-confined
+                # directory may itself be a symlink out of the tree; its
+                # contents would then be parsed and echoed back as
+                # dependency coordinates. Confine the final target too.
+                #
+                # ``candidate.exists()`` already followed the link, so a
+                # dangling one never reaches here — it stays a miss that
+                # falls through to the cache and fetch tiers, rather than
+                # becoming a blocked escape.
+                try:
+                    resolve_and_confine(candidate, parent_sandbox)
+                except PathEscapeError:
+                    errors.append(
+                        f"Parent POM for {data.artifact_id}: {label} — "
+                        f"relativePath '{relative}' resolves outside the "
+                        f"project sandbox; blocked"
+                    )
+                    return None
+                # Return the PRE-resolution path. The caller anchors the
+                # grandparent's own <relativePath> on this file's parent
+                # directory, and for a symlinked parent that anchor is
+                # the link's directory, not the target's — returning the
+                # resolved path would silently change which grandparent
+                # a legitimate project inherits from. Reading it is safe
+                # because the target was just proven to be in-tree.
                 return candidate
 
         # Filesystem missed (or skipped) — fall through to local cache
