@@ -76,6 +76,7 @@ from scarno.security import (
     PathEscapeError,
     resolve_and_confine,
     sanitise_declared_version,
+    sanitise_token,
 )
 
 _MAVEN_NS = "{http://maven.apache.org/POM/4.0.0}"
@@ -949,18 +950,36 @@ class MavenPomResolver(BaseAnalyser):
                 )
 
         for module in target.modules:
-            submodule_dir = (resolved_pom.parent / module).resolve()
+            # The <module> text is attacker-controlled. Confine it BEFORE
+            # touching the filesystem: joining and resolving it first and
+            # only confining inside the recursive call still lets an
+            # adversarial POM stat an arbitrary absolute path on the
+            # operator's host and read the outcome out of the report
+            # (existence oracle). The confinement in the recursive call
+            # is kept as defence in depth.
+            module_token = sanitise_token(module)
+            try:
+                submodule_dir = resolve_and_confine(
+                    resolved_pom.parent / module, project_root
+                )
+            except PathEscapeError:
+                # Echo only the sanitised <module> token — the resolved
+                # out-of-root path must not reach the report, and the
+                # message must not vary with whether that path exists.
+                errors.append(
+                    f"Module '{module_token}' resolves outside the project "
+                    f"root; skipped"
+                )
+                continue
             submodule_pom = submodule_dir / "pom.xml"
             if submodule_pom == resolved_pom:
                 errors.append(
-                    f"Module cycle detected: <module>{module}</module> points "
-                    f"to the parent POM itself"
+                    f"Module cycle detected: <module>{module_token}</module> "
+                    f"points to the parent POM itself"
                 )
                 continue
             if not submodule_pom.exists():
-                errors.append(
-                    f"Module '{module}' has no pom.xml at {submodule_pom}"
-                )
+                errors.append(f"Module '{module_token}' has no pom.xml")
                 continue
             self._resolve_module(
                 submodule_pom,

@@ -238,6 +238,51 @@ def sanitise_declared_version(value: str | None) -> str | None:
     return text or None
 
 
+# ── Report-token sanitisation ───────────────────────────────────────────────
+#
+# For a short, user-derived token that a diagnostic message echoes back so
+# the operator can tell which input caused it (e.g. a Maven ``<module>``
+# name). Deliberately narrower than the two neighbouring helpers:
+#
+#   * NOT ``sanitise`` — that one preserves LF by design (it is used for
+#     multi-line reason strings), so a token containing a newline could
+#     forge extra lines in the text / Markdown warning lists.
+#   * NOT ``sanitise_declared_version`` — that one also applies
+#     Mermaid-label policy (dropping the reserved words ``click``,
+#     ``subgraph``, ``classDef``, ``linkStyle``) and the 64-character
+#     declared-version cap. Applied to a token, that policy rewrites
+#     legitimate input: a directory named ``clickhouse-connector`` would
+#     be echoed as ``house-connector``, naming something that does not
+#     exist.
+#
+# Removed here: ANSI/OSC escape sequences, C0 controls and DEL, the 8-bit
+# C1 range U+0080..U+009F (notably U+0085 NEL, which ``str.splitlines``
+# treats as a line break and which ``strip_control_chars`` does not
+# cover), TAB / LF / CR, and the same Markdown-active characters the
+# declared-version sanitiser strips. Nothing else is touched and no
+# length cap is applied, so a legitimate token is echoed verbatim.
+#
+# Not covered: the Unicode separators U+2028 / U+2029, which no sanitiser
+# in this module strips today.
+_C1_CONTROL_TRANSLATE = str.maketrans(
+    "", "", "".join(chr(c) for c in range(0x80, 0xA0))
+)
+
+
+def sanitise_token(value: str) -> str:
+    """Sanitise a short user-derived token for echoing into a message.
+
+    Strips escape sequences, C0/C1 control characters (including
+    U+0085 NEL), TAB / LF / CR, and the Markdown-active characters
+    listed in ``_VERSION_STRIP_CHARS``. Applies no keyword substitution
+    and no length cap, so the sanitised token still names the input the
+    operator supplied.
+    """
+    text = sanitise(value)
+    text = text.translate(_C1_CONTROL_TRANSLATE)
+    return text.translate(_VERSION_STRIP_TRANSLATE)
+
+
 # ── Path confinement ─────────────────────────────────────────────────────────
 
 
