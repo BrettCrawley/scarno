@@ -20,6 +20,9 @@ venv/
 # Build outputs
 dist/
 build/
+# Wheels built or downloaded into the repo root (e.g. pulling a published
+# release to reproduce a bug against it). Normal builds land in dist/.
+/*.whl
 
 # SRTM coverage reports
 srtm-coverage.json
