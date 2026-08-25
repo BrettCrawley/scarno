@@ -159,14 +159,50 @@ runs:
         TS_ANNOTATE: ${{ inputs.annotate }}
       run: |
         set -euo pipefail
-        scarno "${TS_PATH}" --format json --output scarno.json || true
-        python - <<'PY'
+        # The JSON report that drives this action's outputs is written to,
+        # and read back from, a directory OUTSIDE the analysed tree. With
+        # the default ``path: .`` that tree is untrusted repository content,
+        # and a repo that plants its own ``scarno.json`` (file or directory)
+        # at the root could otherwise feed us a forged report, or make the
+        # write fail — and a failed scan must never read as a clean one.
+        TS_REPORT_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+        TS_JSON="${TS_REPORT_DIR}/scarno-action-report.json"
+        rm -f "${TS_JSON}"
+        # scarno confines --output to the cwd when the cwd IS the analysed
+        # project, so the scan runs from the report directory and is handed
+        # the absolute path of the tree to analyse.
+        TS_TARGET="$(cd "${TS_PATH}" && pwd)"
+        TS_EXIT=0
+        (cd "${TS_REPORT_DIR}" && scarno "${TS_TARGET}" \
+          --format json --output "${TS_JSON}") || TS_EXIT=$?
+        # Documented exit codes: 0 = clean, 1 = SAFE deps present,
+        # 3 = --fail-on-severity gate tripped. Anything else (2 = analysis
+        # failed, or a crash / signal) means there is no trustworthy verdict,
+        # so fail the step instead of emitting finding-count=0 /
+        # highest-severity=NONE and no annotations.
+        case "${TS_EXIT}" in
+          0 | 1 | 3) ;;
+          *)
+            echo "::error title=Scarno::JSON analysis failed with exit code ${TS_EXIT}; refusing to report an empty result."
+            exit 1
+            ;;
+        esac
+        TS_JSON="${TS_JSON}" python - <<'PY'
         import json, os, sys
+        report = os.environ["TS_JSON"]
         try:
-            with open("scarno.json") as f:
+            with open(report, encoding="utf-8") as f:
                 data = json.load(f)
-        except Exception:
-            data = {"dependencies": [], "findings": []}
+        except (OSError, ValueError) as exc:
+            # No report means no verdict. Never substitute an empty,
+            # clean-looking result — that would let a scan failure pass
+            # for a clean scan.
+            print(
+                "::error title=Scarno::The JSON report could not be read; "
+                "refusing to report an empty result."
+            )
+            print(f"scarno report {report!r} read error: {exc!r}", file=sys.stderr)
+            sys.exit(1)
 
         deps = data.get("dependencies") or []
         findings = [f for f in (data.get("findings") or []) if not f.get("suppressed")]

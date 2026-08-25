@@ -22,7 +22,11 @@ def _extract_collect_script(manifest_text: str) -> str:
     """Pull the inline Python heredoc out of the ``collect`` step so it can
     be executed directly (the runner feeds it to ``python -``)."""
     lines = manifest_text.splitlines()
-    starts = [i for i, ln in enumerate(lines) if ln.strip() == "python - <<'PY'"]
+    # The step may prefix per-command environment (e.g. TS_JSON=... python -),
+    # so match the heredoc opener at the end of the line rather than exactly.
+    starts = [
+        i for i, ln in enumerate(lines) if ln.strip().endswith("python - <<'PY'")
+    ]
     assert starts, "action.yml must run the collect step via a `python - <<'PY'` heredoc"
     start = starts[0]
     ends = [i for i in range(start + 1, len(lines)) if lines[i].strip() == "PY"]
@@ -144,7 +148,8 @@ class TestAnnotations:
                 },
             ],
         }
-        (tmp_path / "scarno.json").write_text(json.dumps(report))
+        report_path = tmp_path / "scarno-action-report.json"
+        report_path.write_text(json.dumps(report))
 
         proc = subprocess.run(
             [sys.executable, "-"],
@@ -154,6 +159,9 @@ class TestAnnotations:
                 "PATH": "/usr/bin:/bin",
                 "GITHUB_OUTPUT": str(tmp_path / "github_output"),
                 "TS_ANNOTATE": "true",
+                # The collect step reads the report from an explicit path
+                # outside the analysed tree, not from the cwd.
+                "TS_JSON": str(report_path),
             },
             capture_output=True,
             text=True,
@@ -189,4 +197,76 @@ class TestJobSummary:
         text = manifest_path.read_text()
         assert "GITHUB_STEP_SUMMARY" in text, (
             "REQ-8: Markdown report must be written to $GITHUB_STEP_SUMMARY"
+        )
+
+
+class TestCollectFailsClosed:
+    """The collect step must never synthesise a clean-looking verdict.
+
+    It previously ran the scan with ``|| true`` and fell back to
+    ``{"dependencies": [], "findings": []}`` on any exception, so an
+    analysis that crashed — or a report the analysed repo made
+    unreadable — emitted ``finding-count=0``, ``highest-severity=NONE``
+    and no annotations: a failed scan presenting as a clean one.
+    """
+
+    @staticmethod
+    def _run_collect(tmp_path, env_extra):
+        manifest = _REPO_ROOT / "action.yml"
+        script = _extract_collect_script(manifest.read_text())
+        env = {
+            "PATH": "/usr/bin:/bin",
+            "GITHUB_OUTPUT": str(tmp_path / "github_output"),
+            "TS_ANNOTATE": "true",
+        }
+        env.update(env_extra)
+        return subprocess.run(
+            [sys.executable, "-"], input=script, cwd=tmp_path,
+            env=env, capture_output=True, text=True,
+        )
+
+    @pytest.mark.requirement("FR-093")
+    def test_missing_report_fails_instead_of_reporting_clean(self, tmp_path):
+        proc = self._run_collect(
+            tmp_path, {"TS_JSON": str(tmp_path / "absent.json")},
+        )
+        assert proc.returncode != 0, (
+            "a missing report must fail the step, not report a clean scan"
+        )
+        assert "refusing to report an empty result" in proc.stdout
+        output_file = tmp_path / "github_output"
+        written = output_file.read_text() if output_file.exists() else ""
+        assert "finding-count=0" not in written, written
+        assert "highest-severity=NONE" not in written, written
+
+    @pytest.mark.requirement("FR-093")
+    def test_malformed_report_fails_instead_of_reporting_clean(self, tmp_path):
+        bad = tmp_path / "scarno-action-report.json"
+        bad.write_text("{not json")
+        proc = self._run_collect(tmp_path, {"TS_JSON": str(bad)})
+        assert proc.returncode != 0
+        assert "refusing to report an empty result" in proc.stdout
+
+    @pytest.mark.requirement("FR-093")
+    def test_report_is_read_from_outside_the_analysed_tree(self):
+        """A repo that plants its own scarno.json at the root must not be
+        able to feed the action a forged report, so the path must come
+        from RUNNER_TEMP rather than the checkout."""
+        text = (_REPO_ROOT / "action.yml").read_text()
+        assert "RUNNER_TEMP" in text
+        assert 'scarno "${TS_TARGET}"' in text, (
+            "the scan must be handed an absolute target so it can run "
+            "from the report directory"
+        )
+
+    @pytest.mark.requirement("FR-093")
+    def test_unexpected_exit_code_fails_the_step(self):
+        """0/1/3 are scarno's documented outcomes. 2 (analysis failed) or
+        any crash means there is no trustworthy verdict."""
+        text = (_REPO_ROOT / "action.yml").read_text()
+        assert "0 | 1 | 3)" in text, (
+            "collect must whitelist the documented exit codes"
+        )
+        assert "|| true" not in text.split("Run Scarno (primary report)")[0], (
+            "the JSON scan must not swallow its exit code"
         )
