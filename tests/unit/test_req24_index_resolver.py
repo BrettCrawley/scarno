@@ -372,3 +372,99 @@ class TestRejectionWarningsRedactCredentials:
         joined = "\n".join(warnings)
         for secret in _SECRET_FRAGMENTS:
             assert secret not in joined, joined
+
+
+# ── PUC-007 — no credential reaches the report by any route ────────────────
+
+
+_NFKC_AT_URL = "https://ci-bot:glpat-SECRETTOKEN＠nexus.corp/maven"   # U+FF20
+_SMALL_AT_URL = "https://ci-bot:glpat-SECRETTOKEN﹫nexus.corp/maven"  # U+FE6B
+
+
+class TestNfkcCredentialLeak:
+    """``urlsplit`` normalises the netloc under NFKC before validating it,
+    so a full-width or small commercial-at is not userinfo as far as the
+    userinfo check is concerned — parsing raises instead, and urllib's
+    exception quotes the offending netloc verbatim. Forwarding that
+    exception text published a working password into the report.
+    """
+
+    @pytest.mark.requirement("SEC-NEW-66")
+    @pytest.mark.parametrize("url", [_NFKC_AT_URL, _SMALL_AT_URL])
+    def test_unparseable_message_withholds_the_value(self, url):
+        from scarno.indexing.resolver import _validate_url
+
+        with pytest.raises(ValueError) as excinfo:
+            _validate_url(url)
+        message = str(excinfo.value)
+        for secret in _SECRET_FRAGMENTS:
+            assert secret not in message, message
+        assert "withheld" in message
+
+    @pytest.mark.requirement("FR-257")
+    @pytest.mark.parametrize("url", [_NFKC_AT_URL, _SMALL_AT_URL])
+    def test_env_nfkc_url_not_echoed(self, monkeypatch, url):
+        monkeypatch.setenv("SCARNO_INDEX_MAVEN", url)
+        endpoints, warnings = resolve_indexes(
+            cli_indexes=None, fetch_enabled=False,
+        )
+        assert endpoints == []
+        joined = "\n".join(warnings)
+        for secret in _SECRET_FRAGMENTS:
+            assert secret not in joined, joined
+
+    @pytest.mark.requirement("FR-256")
+    @pytest.mark.parametrize("url", [_NFKC_AT_URL, _CREDENTIALED_URL])
+    def test_cli_index_value_not_echoed(self, url):
+        """The ``--index`` sites quoted the whole flag back, so the
+        credential reached the report even when the validator's own
+        message was clean."""
+        endpoints, warnings = resolve_indexes(
+            cli_indexes=[f"maven={url}"], fetch_enabled=False,
+        )
+        assert endpoints == []
+        joined = "\n".join(warnings)
+        for secret in _SECRET_FRAGMENTS:
+            assert secret not in joined, joined
+        assert "ci-bot" not in joined, joined
+
+
+class TestRejectionsStayDiagnosable:
+    """Withholding the value must not cost the operator the ability to
+    tell WHICH index failed — several --index flags produce several
+    warnings, and they have to be distinguishable."""
+
+    @pytest.mark.requirement("FR-256")
+    def test_each_bad_flag_is_identifiable_by_position_and_ecosystem(self):
+        endpoints, warnings = resolve_indexes(
+            cli_indexes=[
+                "maven=https://good.example/m2",
+                f"maven={_NFKC_AT_URL}",
+                "maven=http://plain-http.example/m2",
+                f"npm={_CREDENTIALED_URL}",
+                "noequalssign",
+            ],
+            fetch_enabled=False,
+        )
+        assert [e.url for e in endpoints] == ["https://good.example/m2"]
+        joined = "\n".join(warnings)
+        # Position identifies the flag; ecosystem narrows it further.
+        assert "#2 (maven)" in joined, joined
+        assert "#3 (maven)" in joined, joined
+        assert "#4 (npm)" in joined, joined
+        assert "#5" in joined, joined
+        # And the reason survives for each.
+        assert "must use https" in joined
+        assert "must not contain userinfo" in joined
+        assert "missing '='" in joined
+
+    @pytest.mark.requirement("FR-256")
+    def test_parseable_rejections_still_name_the_host(self):
+        """Withholding is only for values that would not parse. When a
+        host can be extracted safely it is still shown, so the operator
+        does not have to count flags."""
+        _, warnings = resolve_indexes(
+            cli_indexes=["maven=http://plain-http.example/m2"],
+            fetch_enabled=False,
+        )
+        assert any("plain-http.example" in w for w in warnings), warnings

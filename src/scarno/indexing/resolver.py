@@ -76,6 +76,22 @@ def _redact_url(url: str) -> str:
     return f"{scheme}://{netloc}" if scheme else f"//{netloc}"
 
 
+def _index_flag_label(position: int, entry: str) -> str:
+    """Identify one ``--index`` flag without echoing its value.
+
+    An operator passing several ``--index`` flags has to be able to tell
+    which one was refused, and the obvious way — quoting the flag back —
+    publishes the credential the flag may carry. So the label names the
+    flag by its position on the command line and by its ecosystem, both
+    of which the operator can match against what they typed, and neither
+    of which can hold a secret. The URL, when it parsed far enough to
+    have a host, is named separately through :func:`_redact_url`.
+    """
+    eco, sep, _ = entry.partition("=")
+    eco = sanitise(eco.strip().lower())[:32] if sep else ""
+    return f"#{position} ({eco})" if eco else f"#{position}"
+
+
 def _validate_url(url: str) -> None:
     """SEC-NEW-66 + N-2 envelope — HTTPS-only, no userinfo, must have
     a host, well-formed URL.
@@ -91,7 +107,19 @@ def _validate_url(url: str) -> None:
     try:
         parsed = urlparse(url)
     except (ValueError, AttributeError) as exc:
-        raise ValueError(f"unparseable URL: {exc}") from exc
+        # The exception TEXT is not safe to forward. urlsplit normalises
+        # the netloc under NFKC before validating it, so a full-width
+        # U+FF20 or small U+FE6B commercial-at is not userinfo as far as
+        # the checks below are concerned — parsing raises here instead,
+        # and urllib's message quotes the offending netloc verbatim. That
+        # netloc is ``user:password@host``, and the password in it is the
+        # real one, so echoing ``{exc}`` publishes a working credential
+        # into the report (PUC-007). Name the failure, never the value.
+        raise ValueError(
+            f"unparseable URL: {type(exc).__name__} "
+            f"(value withheld; it did not parse, so no host could be "
+            f"safely extracted to name it by)"
+        ) from exc
     if parsed.scheme != "https":
         raise ValueError(
             f"index URL must use https:// (got {parsed.scheme!r}); "
@@ -114,10 +142,11 @@ def _parse_cli_indexes(
 ) -> tuple[dict[str, list[str]], list[str]]:
     out: dict[str, list[str]] = {}
     warnings: list[str] = []
-    for entry in (raw or ()):
+    for position, entry in enumerate(raw or (), start=1):
+        label = _index_flag_label(position, entry)
         if "=" not in entry:
             warnings.append(
-                f"req24: --index {sanitise(entry)!r} missing '=' "
+                f"req24: --index {label} missing '=' "
                 "(expected ECOSYSTEM=URL); ignored"
             )
             continue
@@ -126,16 +155,17 @@ def _parse_cli_indexes(
         url = url.strip()
         if not eco:
             warnings.append(
-                f"req24: --index {sanitise(entry)!r} has empty ecosystem; "
-                "ignored"
+                f"req24: --index {label} has empty ecosystem; ignored"
             )
             continue
         try:
             _validate_url(url)
         except ValueError as exc:
+            # The rejection message already names the redacted URL when
+            # the value parsed far enough to have a host; the label adds
+            # which flag it was.
             warnings.append(
-                f"req24: --index {sanitise(entry)!r} rejected: "
-                f"{sanitise(str(exc))}"
+                f"req24: --index {label} rejected: {sanitise(str(exc))}"
             )
             continue
         out.setdefault(eco, []).append(url)
