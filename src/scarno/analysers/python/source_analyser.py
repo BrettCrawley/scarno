@@ -56,6 +56,7 @@ from scarno.security import (
     MAX_FILE_BYTES,
     PathEscapeError,
     resolve_and_confine,
+    sanitise,
 )
 
 # REQ-3b — Directory names we treat as vendored / in-repo dep copies.
@@ -1285,10 +1286,33 @@ def _collect_shell_findings(root: Path, errors: list[str]) -> list[Finding]:
         for pattern in ("*.yml", "*.yaml"):
             candidates.extend(gh_workflows.glob(pattern))
     for path in candidates:
+        # SEC-002 — the candidate came from a glob over the analysed tree,
+        # but a name matched there may be a symlink pointing anywhere. Read
+        # the confined, symlink-resolved path so the check and the open
+        # cannot drift, and so a repository cannot have an out-of-tree file
+        # read and quoted back in the report as if it were its own.
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            resolved = resolve_and_confine(path, root)
+        except PathEscapeError:
+            errors.append(
+                f"shell-scan: {sanitise(path.name)} resolves outside the "
+                f"project root; skipped"
+            )
+            continue
+        # Regular files only. A FIFO named ``Dockerfile.fifo`` sits inside
+        # the tree, so confinement passes, and then ``read_text`` blocks
+        # forever with no writer — the scan never returns. Character
+        # devices (``/dev/zero`` reached through an in-tree link) read
+        # without end. Neither can be a real Dockerfile or workflow.
+        if not resolved.is_file():
+            continue
+        try:
+            text = resolved.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        # Provenance stays as the project lays the file out, not wherever a
+        # link resolved to — the pre-resolution path is what a reader needs
+        # in order to find it.
         try:
             rel = str(path.relative_to(root))
         except ValueError:
