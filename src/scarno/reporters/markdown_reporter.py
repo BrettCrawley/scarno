@@ -916,9 +916,18 @@ def _render_findings(findings: list[Finding]) -> list[str]:
         lines.append("")
         for f in sorted(suppressed, key=_finding_sort_key):
             location = f"`{_escape_md(f.file_path)}:{f.line}`"
+            # Name where the suppression came from. Both routes are read
+            # out of the analysed tree, so on an untrusted scan this tells
+            # a reviewer that whoever wrote the code also chose to silence
+            # this finding.
+            origin = (
+                f" _(via {_escape_md(f.suppressed_by)})_"
+                if f.suppressed_by
+                else ""
+            )
             lines.append(
                 f"- _suppressed_ **[{f.severity.value}]** `{f.rule_id}` "
-                f"{location}"
+                f"{location}{origin}"
             )
         lines.append("")
         lines.append("</details>")

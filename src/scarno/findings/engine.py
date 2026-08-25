@@ -524,6 +524,7 @@ def apply_rules(
                     remediation=f.remediation,
                     package_hint=f.package_hint,
                     suppressed=True,
+                    suppressed_by="inline",
                 )
             )
         else:

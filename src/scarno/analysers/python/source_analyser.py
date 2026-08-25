@@ -1072,6 +1072,7 @@ def analyse_source_files_with_findings(
                         remediation=f.remediation,
                         package_hint=f.package_hint,
                         suppressed=True,
+                        suppressed_by="config",
                     )
                 )
             else:

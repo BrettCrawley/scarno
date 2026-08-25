@@ -192,6 +192,7 @@ recognised manifest file.
 | `--fail-on-remote-severity` | flag | off | **REQ-24** — let `provenance="remote"` findings escalate exit code `3` via `--fail-on-severity`. Off by default: remote findings are visible (with a top-of-report banner) but advisory, because the bytes the analyser saw were network-fetched and may be attacker-influenceable. Requires `--allow-remote-fetch`. |
 | `--no-gitignore` | flag | off | Disable `.gitignore` filtering during source-file discovery (analyse ignored files too). |
 | `--show-suppressed` | flag | off | Include suppressed findings in the report, marked `suppressed=true`. |
+| `--fail-on-suppressed-severity` | flag | off | Let **suppressed** findings escalate exit code `3` via `--fail-on-severity`. Off by default, because suppression is how you silence a finding in your *own* repository. Turn it on when scanning a tree you do not control — both suppression routes are files in that tree, so whoever wrote the code also chose what the gate ignores. |
 | `--verbose` | flag | off | Emit debug lines to stderr. Suppressed in non-text formats so piped output stays clean. |
 | `--help` | flag | — | Show built-in help and exit. |
 
@@ -329,6 +330,13 @@ security findings while still surfacing prune candidates in the report body.
 Findings can be suppressed two ways. Suppressed findings are hidden from the
 report by default and do not count toward `--fail-on-severity`; pass
 `--show-suppressed` to see them (marked `suppressed=true`).
+
+> **Scanning a repository you do not control?** Both routes below are read out
+> of the tree being analysed, so a pull request that introduces a finding can
+> introduce its own suppression in the same change and leave CI green. Pass
+> `--fail-on-suppressed-severity` so suppressed findings still gate the build.
+> The report names where each suppression came from (`via inline` /
+> `via config`) so a reviewer can see who chose it.
 
 **1. Inline comment** — on the offending source line:
 

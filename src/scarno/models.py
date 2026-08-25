@@ -312,6 +312,19 @@ class Finding:
     remediation: str
     package_hint: str | None = None
     suppressed: bool = False
+    # Where the suppression came from, when ``suppressed`` is set.
+    # ``"inline"`` — a ``# scarno: allow`` comment on the offending line.
+    # ``"config"`` — ``[tool.scarno.findings]`` in the analysed project's
+    # pyproject.toml.
+    #
+    # BOTH are read out of the tree under analysis, so when that tree is
+    # untrusted — a pull request, a repository being scanned for the
+    # first time — both are attacker-controlled. The distinction is
+    # recorded for the report, never to decide whether a suppression can
+    # be trusted: treating "config" as the operator's own intent is what
+    # makes an --fail-on-suppressed gate bypassable by adding four lines
+    # to the same pull request it is meant to police.
+    suppressed_by: str | None = None
     # REQ-24 / FR-265 — provenance of the artefact that produced this
     # finding. ``"local"`` (default) for findings derived purely from
     # in-tree source / pre-existing cache reads — the pre-REQ-24

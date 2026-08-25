@@ -131,6 +131,11 @@ class _RunOptions:
     # --fail-on-severity (off by default — remote findings are
     # advisory unless the operator opts in). Argv-only.
     fail_on_remote_severity: bool = False
+    # Escalate SUPPRESSED findings into exit code 3. Off by default so
+    # suppression keeps working for the operator's own repository; on,
+    # for scanning a tree you do not control, where the suppression
+    # itself is attacker-supplied. Argv-only.
+    fail_on_suppressed_severity: bool = False
     # REQ-24 / FR-256 — repeatable --index ECOSYSTEM=URL strings,
     # parsed by IndexConfigResolver. Empty = no CLI-supplied indexes.
     cli_indexes: tuple[str, ...] = ()
@@ -563,6 +568,7 @@ def _exit_code_for(
     fail_on_severity: FindingSeverity | None,
     *,
     fail_on_remote_severity: bool = False,
+    fail_on_suppressed_severity: bool = False,
 ) -> int:
     # Exit 3 — findings at or above the requested severity.
     threshold = fail_on_severity or FindingSeverity.HIGH
@@ -574,7 +580,7 @@ def _exit_code_for(
     # ABI verdict derived from them is potentially fabricated;
     # gate-by-default would let an attacker manipulate CI passes.
     def _gates_exit_three(f: "Finding") -> bool:
-        if f.suppressed:
+        if f.suppressed and not fail_on_suppressed_severity:
             return False
         if _SEVERITY_ORDER[f.severity] < threshold_rank:
             return False
@@ -785,6 +791,7 @@ def _run(opts: _RunOptions) -> int:
         result,
         opts.fail_on_severity,
         fail_on_remote_severity=opts.fail_on_remote_severity,
+        fail_on_suppressed_severity=opts.fail_on_suppressed_severity,
     )
 
 
@@ -988,6 +995,20 @@ def main(
             "Doubles fetch volume. Argv-only. Requires --allow-remote-fetch."
         ),
     ),
+    fail_on_suppressed_severity: bool = typer.Option(
+        False,
+        "--fail-on-suppressed-severity",
+        help=(
+            "Let SUPPRESSED findings escalate exit code 3 via "
+            "--fail-on-severity. Off by default, because suppression is "
+            "how an operator silences a finding in their OWN repository. "
+            "Turn it on when scanning a tree you do not control: both "
+            "suppression routes — a '# scarno: allow' comment and "
+            "[tool.scarno.findings] in pyproject.toml — are read out of "
+            "that tree, so whoever wrote the code also chose what the "
+            "gate ignores. Argv-only."
+        ),
+    ),
     fail_on_remote_severity: bool = typer.Option(
         False,
         "--fail-on-remote-severity",
@@ -1130,6 +1151,7 @@ def main(
         allow_remote_fetch=allow_remote_fetch,
         integrity_cross_check=integrity_cross_check,
         fail_on_remote_severity=fail_on_remote_severity,
+        fail_on_suppressed_severity=fail_on_suppressed_severity,
         # FR-256 — repeatable --index entries; parsing happens later via
         # IndexConfigResolver so warnings can be emitted into the
         # persistent report channel (FR-263) rather than stderr.
