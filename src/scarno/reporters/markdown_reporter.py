@@ -38,6 +38,12 @@ Safety:
     separators (LF, NEL, U+2028, U+2029, …) are folded to spaces so a
     value cannot terminate the list item it is rendered in and emit
     markdown lines of its own.
+  * Values rendered inside a Markdown **table cell** go through
+    ``_escape_md_cell``, which folds line breaks before delegating to
+    ``_escape_md``: a raw break ends the row and terminates the table,
+    hiding the rows below it. The fold is now performed by both — the
+    cell helper keeps its own so it stays correct if ``_escape_md``'s
+    handling ever narrows.
   * Mermaid label text is hardened against injection: ``]``, ``[``, ``"``,
     newline, backslash, ANSI/control chars are escaped; reserved tokens
     (``subgraph``, ``classDef``, ``linkStyle``, ``style``, ``end``) are
@@ -121,6 +127,41 @@ def _escape_md(text: str) -> str:
     for ch in ("|", "`", "*", "_", "[", "]", "<", ">"):
         out = out.replace(ch, f"\\{ch}")
     return out
+
+
+# Every character a Markdown renderer (or ``str.splitlines``) may treat
+# as a line ending. A raw line break inside a table cell ends the row —
+# and with it the table — so the genuine rows below it stop rendering as
+# table rows and disappear from the reviewer's view.
+#
+# ``sanitise()`` (called by ``_escape_md``) already drops CR, VT, FF and
+# the C0 separators, but it deliberately preserves LF and never touches
+# NEL (U+0085), LINE SEPARATOR (U+2028) or PARAGRAPH SEPARATOR (U+2029),
+# so those four reach the renderer intact. The whole set is folded here
+# rather than only the survivors, so this guarantee holds locally and
+# does not depend on what ``sanitise()`` happens to strip.
+_LINE_BREAK_TRANSLATE = str.maketrans(
+    {ch: " " for ch in "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"}
+)
+
+
+def _escape_md_cell(text: str) -> str:
+    """Escape a user-derived string for a Markdown **table cell**.
+
+    ``_escape_md`` neutralises every Markdown-active character that
+    matters inside a cell (``|``, backtick, ``*``, ``_``, ``[``, ``]``,
+    ``<``, ``>``, backslash) but not the line break, which would
+    terminate the row. Fold line breaks to a single space first, then
+    escape.
+
+    Deliberately *not* ``sanitise_declared_version``: that helper is a
+    Mermaid-oriented filter which mangles legitimate Maven versions —
+    it turns the documented range ``[1.0,2.0)`` into ``1.0,2.0)`` and
+    deletes reserved substrings from the middle of a qualifier
+    (``1.0-clickhouse.1`` → ``1.0-house.1``) — and the cells this
+    escapes exist to tell a reviewer exactly which versions conflict.
+    """
+    return _escape_md(text.translate(_LINE_BREAK_TRANSLATE))
 
 
 def _dep_label(dep: Dependency) -> str:
@@ -750,11 +791,16 @@ def _render_multi_version_section(result: "AnalysisResult") -> list[str]:
             nodes,
             key=lambda v: (v.declared_version or ""),
         ):
+            # ``ver`` holds the version verbatim as the manifest declared
+            # it and is escaped at each point it reaches the table;
+            # ``shown`` is already the escaped display form, so the
+            # ``**`` resolved marker wrapped round it below stays live.
             if n.declared_version:
-                ver = shown = n.declared_version
+                ver = n.declared_version
+                shown = _escape_md_cell(ver)
             elif fallback:
                 ver = fallback
-                shown = f"{fallback} (resolved)"
+                shown = f"{_escape_md_cell(ver)} (resolved)"
             else:
                 ver = shown = "(unresolved)"
             if n.is_resolved:
@@ -763,7 +809,7 @@ def _render_multi_version_section(result: "AnalysisResult") -> list[str]:
             else:
                 declared_parts.append(shown)
             if n.removable:
-                removable_parts.append(ver)
+                removable_parts.append(_escape_md_cell(ver))
         # No node carried is_resolved (e.g. the resolved version itself
         # was unpinned) — fall back to the dependency list.
         if resolved_str == "?" and fallback:
@@ -771,7 +817,7 @@ def _render_multi_version_section(result: "AnalysisResult") -> list[str]:
         out.append(
             f"| `{_escape_md(coord)}` | "
             f"{', '.join(declared_parts)} | "
-            f"`{_escape_md(resolved_str)}` | "
+            f"`{_escape_md_cell(resolved_str)}` | "
             f"{(', '.join(removable_parts)) or '—'} |"
         )
     out.append("")
