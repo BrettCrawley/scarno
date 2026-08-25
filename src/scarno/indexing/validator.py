@@ -332,8 +332,16 @@ def _validate_npm(raw: str) -> tuple[str, ...]:
 # never serves an artefact under a range as a path segment, and the
 # bracket characters were already stripped upstream.
 
+#
+# ``~`` is admitted alongside the rest: RFC 3986 lists it in the
+# unreserved set, so it is literal in a URL path segment and needs no
+# encoding, and it is an ordinary filename character on every platform
+# the cache targets (only a *leading* ``~`` means anything, and only to
+# a shell, which never sees these paths). Debian-style pre-release
+# versions such as ``1.0~beta`` do reach Maven repositories, so
+# rejecting it would refuse to fetch a legitimate artefact.
 _VERSION_RE: Final[re.Pattern[str]] = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._+-]*$"
+    r"^[A-Za-z0-9][A-Za-z0-9._+~-]*$"
 )
 
 

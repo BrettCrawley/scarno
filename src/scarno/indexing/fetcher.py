@@ -61,6 +61,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
+from urllib.parse import quote
 
 from scarno.indexing.endpoint import IndexEndpoint
 from scarno.indexing.http_client import (
@@ -111,6 +112,53 @@ _CHECKSUM_ALGOS: Final[tuple[tuple[str, str], ...]] = (
     ("sha256", ".sha256"),
     ("sha1", ".sha1"),
 )
+
+
+# ── Declared-version → single path segment ─────────────────────────────────
+#
+# The declared version comes from the analysed project's dependency file
+# (pom.xml / build.gradle), so it is attacker-controlled input, and it is
+# interpolated into BOTH the artefact URL and the quarantined-cache path.
+# The group/artifact halves of those paths are already pinned by the
+# ValidatedCoordinate regex; the version gets nothing equivalent, so it is
+# percent-encoded here to stop it *being* path structure.
+#
+# ``quote`` never encodes the RFC 3986 unreserved set (A-Za-z0-9 and
+# ``- . _ ~``). ``_SEGMENT_SAFE`` additionally keeps the RFC 3986
+# sub-delims literal: none of them can terminate a path segment, and
+# ``+`` in particular is a real Maven version character (the whole Fabric
+# ecosystem publishes versions like ``1.20.1+build.10``) — encoding it
+# would change the URL and the cache path for perfectly legitimate
+# projects. ``%``, ``/``, ``?`` and ``#`` are deliberately NOT safe:
+# they are exactly the characters that would let a pom.xml choose the
+# request path on the operator's index. ``:`` and ``@`` are legal in a
+# path segment but never appear in a Maven version, and ``:`` is illegal
+# in a Windows filename, so they stay encoded.
+_SEGMENT_SAFE: Final[str] = "!$&'()*+,;="
+
+
+def _path_segment(value: str) -> str:
+    """Percent-encode ``value`` so it can only ever be ONE path segment.
+
+    A version built from unreserved characters and sub-delims — which
+    covers ordinary Maven versions, including the ``1.20.1+build.10``
+    build-metadata family — encodes to itself, so the request and the
+    cache layout are unchanged for legitimate input. Anything that
+    could act as structure (``/``, ``?``, ``#``, and ``%`` itself, so
+    an encoded separator cannot round-trip back into one) is encoded.
+
+    ``.`` is unreserved, so ``quote`` leaves ``.`` / ``..`` / ``...``
+    alone — and a dot-only segment is removed (or climbs) during path
+    normalisation both at the far end and in ``Path.resolve``. Encode
+    the dots in that case so the segment survives as itself.
+
+    The mapping is injective: distinct versions never collapse onto one
+    URL or one cache entry.
+    """
+    encoded = quote(value, safe=_SEGMENT_SAFE)
+    if encoded and not encoded.strip("."):
+        encoded = encoded.replace(".", "%2E")
+    return encoded
 
 
 # ── Audit-emit helper (fail-secure per N-4) ────────────────────────────────
@@ -186,7 +234,10 @@ def _cache_relative_path(
     Maven layout mirrors ``~/.m2`` so a familiar ``ls`` shows what
     scarno has fetched. Other ecosystems land in subdirectories
     keyed by ecosystem name. ``version`` MUST already be sanitised
-    (callers use :func:`sanitise_declared_version` before this point).
+    (callers use :func:`sanitise_declared_version` before this point);
+    it is additionally run through :func:`_path_segment` here so a
+    version from the analysed project cannot contribute separators or
+    dot-segments to the cache layout.
 
     ``extension`` selects the artefact kind — ``"jar"`` (default,
     pre-Option-2 behaviour) or ``"pom"`` (Option 2 transitive POM
@@ -198,16 +249,20 @@ def _cache_relative_path(
         raise ValueError(
             f"_cache_relative_path: extension {extension!r} not in allow-list"
         )
+    version_segment = _path_segment(version)
     if coord.ecosystem == "maven":
         group, artifact = coord.components
         group_path = Path(*group.split("."))
-        return Path(coord.ecosystem) / group_path / artifact / version / (
-            f"{artifact}-{version}.{extension}"
+        return (
+            Path(coord.ecosystem) / group_path / artifact / version_segment
+            / f"{artifact}-{version_segment}.{extension}"
         )
     # Generic fallback for future ecosystems (npm, etc.) — components
     # joined as path segments. v1 doesn't use this; the fetcher
     # short-circuits for non-Maven ecosystems.
-    return Path(coord.ecosystem, *coord.components, version, "artefact")
+    return Path(
+        coord.ecosystem, *coord.components, version_segment, "artefact"
+    )
 
 
 def _file_age_seconds(path: Path) -> float:
@@ -389,6 +444,13 @@ class RemoteArtifactFetcher:
                 "(not a valid index path segment)"
             )
             return None
+        # NOTE: the F20 patch also emitted an audit line here for a
+        # version holding structural characters, on the assumption that
+        # such a version would be encoded and fetched. The allow-list
+        # above rejects it outright instead, so that branch would be
+        # unreachable; the encoding it introduced is kept at both sinks
+        # as defence in depth, where it still guards any future call
+        # path that reaches them without passing through this gate.
 
         # 2. Filter endpoints to this ecosystem; respect coordinate_prefix
         #    (v2-reserved field; v1 endpoints leave it None so this is a
@@ -986,9 +1048,14 @@ class RemoteArtifactFetcher:
         group, artifact = coord.components
         group_path = group.replace(".", "/")
         base = endpoint.url.rstrip("/")
+        # The version is analysed-project input: encode it so it can
+        # only ever be the <version> segment. The .sha512 / .sha256 /
+        # .sha1 cross-fetch URLs are built by appending to this string,
+        # so they inherit the same containment.
+        version_segment = _path_segment(version)
         return (
-            f"{base}/{group_path}/{artifact}/{version}/"
-            f"{artifact}-{version}.{extension}"
+            f"{base}/{group_path}/{artifact}/{version_segment}/"
+            f"{artifact}-{version_segment}.{extension}"
         )
 
 
