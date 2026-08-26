@@ -91,29 +91,46 @@ def _compute_max_workers() -> int:
 
 
 # Method / constructor:  public int utilityMethod(java.lang.String);
+#                        public com.thirdparty.Helper(java.lang.String);
+#                        void packagePrivate() throws java.io.IOException;
 # Field:                 public static final java.lang.String VERSION;
+#                        int packagePrivateField;
 # Class header:          public class com.thirdparty.Helper {
 _JAVAP_HEADER_RE = re.compile(
     r"^\s*(?:public\s+|protected\s+|abstract\s+|final\s+|static\s+)*"
     r"(?:class|interface|enum)\s+(?P<fqcn>[\w.$]+)",
 )
+
+# Modifiers are OPTIONAL (``*``, not ``+``) and include ``private``.
+#
+# A package-private member carries no access modifier at all — javap
+# prints ``void foo();`` — so requiring at least one modifier dropped
+# every one of them. ``private`` is accepted so the parser is correct
+# for any javap access level, including ``-p``, even though the
+# extraction runs at ``-package`` and never emits private members.
+_JAVAP_MODIFIER = (
+    r"(?:public|protected|private|static|final|abstract|synchronized"
+    r"|native|strictfp|default|volatile|transient)"
+)
 _JAVAP_METHOD_RE = re.compile(
-    r"""
+    rf"""
     ^\s*
-    (?P<modifiers>(?:public|protected|static|final|abstract|synchronized|native)\s+)+
+    (?P<modifiers>(?:{_JAVAP_MODIFIER}\s+)*)
     (?:(?P<return>[\w.$<>\[\],\s?]+?)\s+)?     # optional return type (constructors omit it)
-    (?P<name>[\w$<>]+)
-    \s*\((?P<args>[^)]*)\)\s*;\s*$
+    (?P<name>[\w.$<>]+)                          # dots: javap prints constructors fully qualified
+    \s*\((?P<args>[^)]*)\)
+    (?:\s*throws\s+[\w.$,\s<>\[\]]+?)?         # optional throws clause
+    \s*;\s*$
     """,
     re.VERBOSE,
 )
 _JAVAP_FIELD_RE = re.compile(
-    r"""
+    rf"""
     ^\s*
-    (?P<modifiers>(?:public|protected|static|final|volatile|transient)\s+)+
+    (?P<modifiers>(?:{_JAVAP_MODIFIER}\s+)*)
     (?P<type>[\w.$<>\[\],\s]+?)\s+
-    (?P<name>\w+)\s*;\s*$
-    """,
+    (?P<name>[\w$]+)\s*;\s*$    # '$' is a legal identifier char: this$0,
+    """,                        # val$x, $assertionsDisabled
     re.VERBOSE,
 )
 
@@ -140,12 +157,23 @@ def javap_public_signatures(stdout: str) -> set[JavaSignature]:
                 m.strip() for m in mm.group("modifiers").split() if m.strip()
             )
             name = mm.group("name")
-            # Constructors look like  `Helper(...)` — their name equals
-            # the class simple name, no return-type captured.
+            # javap prints a constructor fully qualified and with no
+            # return type — ``public com.thirdparty.Helper(...)`` — so
+            # match on the last segment and require the return group to
+            # be absent. Comparing the whole printed name against the
+            # class simple name never matched, which is why constructors
+            # were dropped entirely rather than merely misclassified.
             simple_class = current_fqcn.rsplit(".", 1)[-1]
-            member_kind = (
-                "constructor" if name == simple_class else "method"
+            is_constructor = (
+                mm.group("return") is None
+                and name.rsplit(".", 1)[-1] == simple_class
             )
+            member_kind = "constructor" if is_constructor else "method"
+            # Record a constructor under the simple name so its identity
+            # does not carry the package twice (the FQCN is already the
+            # first element of the identity tuple).
+            if is_constructor:
+                name = simple_class
             out.add(
                 JavaSignature(
                     fqcn=current_fqcn,

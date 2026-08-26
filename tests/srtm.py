@@ -394,6 +394,9 @@ FUNCTIONAL_REQUIREMENTS: frozenset[str] = frozenset(
         "FR-272",  # signature_diff matches at descriptor granularity; a deleted overload of a surviving member is reported
         "FR-273",  # signature_diff output is invariant under PYTHONHASHSEED
         "FR-274",  # ABI findings name the overload (descriptor in message) and sort totally
+        # REQ-22 — non-private ABI surface (SCARNO-BUG-protected-members)
+        "FR-275",  # javap extraction runs at -package: public + protected + package-private
+        "FR-276",  # parser covers every access level, constructors, and throws clauses
         # COMP-005 — REQ-24 GDPR compliance touchpoint (consent gate + disclosure)
         "COMP-005",  # GDPR — operator IP disclosure to index hosts; consent via --allow-remote-fetch + PUC-006/008
     }

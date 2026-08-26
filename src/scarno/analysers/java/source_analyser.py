@@ -699,7 +699,7 @@ class JvmSourceAnalyser(BaseAnalyser):
         jar_path: Path,
         class_name: str,
     ) -> str | None:
-        """Invoke ``javap -public`` for ``class_name`` using ``jar_path``.
+        """Invoke ``javap -package`` for ``class_name`` using ``jar_path``.
 
         Returns ``None`` when:
           * class name is not a valid Java identifier (SEC-NEW-09),
@@ -717,7 +717,17 @@ class JvmSourceAnalyser(BaseAnalyser):
             return None
         try:
             completed = subprocess.run(  # noqa: S603 — shell=False + validated argv
-                [javap, "-public", "-classpath", str(jar_path), class_name],
+                # ``-package`` = public + protected + package-private.
+                # ``-public`` hid the entire protected surface, and a
+                # protected member removed between two versions raises
+                # NoSuchMethodError for a subclass exactly as a public one
+                # does — subclassing library base classes is the idiomatic
+                # way to use Jackson, Netty, Jetty and SnakeYAML, which is
+                # precisely where this bit. Private members stay excluded:
+                # nothing outside the class can reference them, so their
+                # removal is not a linkage risk and including them would
+                # only add drift noise.
+                [javap, "-package", "-classpath", str(jar_path), class_name],
                 capture_output=True,
                 timeout=_JAVAP_TIMEOUT_SEC,
                 shell=False,

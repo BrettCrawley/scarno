@@ -463,6 +463,8 @@ Tests: tests/integration/test_req22_compliance_signal.py.
 | FR-272 | signature_diff matches at descriptor granularity; a deleted overload of a surviving member is reported | `tests/unit/test_req22_diff.py` |
 | FR-273 | signature_diff output is invariant under PYTHONHASHSEED | `tests/unit/test_req22_diff_determinism.py` |
 | FR-274 | ABI findings name the overload (descriptor in message) and sort totally | `tests/unit/test_req22_finding_sort.py` |
+| FR-275 | javap extraction runs at `-package` (public + protected + package-private) | `tests/unit/test_req22_javap_parse.py` |
+| FR-276 | Parser covers every access level, constructors, and throws clauses | `tests/unit/test_req22_javap_parse.py` |
 | SEC-NEW-42 | _JAVAP_PER_JAR_TIMEOUT_S = 30s enforced | `tests/security/test_req22_timeout.py` |
 | SEC-NEW-43 | _JAVAP_MAX_JARS_PER_RUN = 128 enforced | `tests/security/test_req22_jar_cap.py` |
 | SEC-NEW-44 | resolve_and_confine + _validate_gav on m2 path construction | `tests/security/test_req22_traversal.py` |
