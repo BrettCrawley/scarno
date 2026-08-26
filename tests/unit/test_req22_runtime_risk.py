@@ -5,6 +5,22 @@ from __future__ import annotations
 import pytest
 
 
+def _write_jar(path, class_fqcns=("com.thirdparty.Helper",)):
+    """Write a minimal but REAL jar declaring the given classes.
+
+    The differ enumerates the archive to decide which classes to inspect,
+    so a zero-byte placeholder yields nothing to diff. The bytes of each
+    entry are irrelevant — only the entry names are read.
+    """
+    import zipfile
+
+    with zipfile.ZipFile(path, "w") as zf:
+        for fqcn in class_fqcns:
+            zf.writestr(fqcn.replace(".", "/") + ".class", b"\xca\xfe\xba\xbe")
+    return path
+
+
+
 @pytest.mark.requirement("FR-234")
 @pytest.mark.requirement("COMP-004")
 def test_runtime_risk_finding_for_source_referenced_removed_method():
@@ -58,7 +74,7 @@ def test_runtime_risk_finding_for_source_referenced_removed_method():
                 m2_root / "com" / "thirdparty" / "helper" / ver
             )
             jar_dir.mkdir(parents=True)
-            (jar_dir / f"helper-{ver}.jar").write_bytes(b"")  # placeholder
+            _write_jar(jar_dir / f"helper-{ver}.jar", ["com.thirdparty.Helper"])
 
         differ = CrossVersionAbiDiffer(
             m2_root=m2_root,
@@ -141,7 +157,7 @@ def test_abi_drift_finding_for_unreferenced_change():
         for ver in ("1.2.0", "1.5.0"):
             jar_dir = m2_root / "com" / "thirdparty" / "helper" / ver
             jar_dir.mkdir(parents=True)
-            (jar_dir / f"helper-{ver}.jar").write_bytes(b"")
+            _write_jar(jar_dir / f"helper-{ver}.jar", ["com.thirdparty.Helper"])
         differ = CrossVersionAbiDiffer(m2_root=m2_root, invoke_javap=fake_javap)
         result = AnalysisResult(
             project_type="java",

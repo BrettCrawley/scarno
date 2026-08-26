@@ -58,6 +58,7 @@ import os
 import re
 import shutil
 import subprocess  # noqa: S404 — wrapped via _invoke_javap_safe with strict validation
+from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -697,7 +698,7 @@ class JvmSourceAnalyser(BaseAnalyser):
     def _invoke_javap_safe(
         self,
         jar_path: Path,
-        class_name: str,
+        class_name: str | Sequence[str],
     ) -> str | None:
         """Invoke ``javap -package`` for ``class_name`` using ``jar_path``.
 
@@ -710,7 +711,16 @@ class JvmSourceAnalyser(BaseAnalyser):
         constructed from validated strings only. No string interpolation
         into a shell command line.
         """
-        if not _is_valid_java_identifier(class_name):
+        # Accepts one class name or many. Batching matters: javap pays
+        # JVM startup per invocation, so enumerating a JAR's classes one
+        # process at a time is untenable. A single string is still the
+        # common case and is normalised here rather than at three call
+        # sites.
+        names = [class_name] if isinstance(class_name, str) else list(class_name)
+        # SEC-NEW-09 — every name is validated before it reaches argv.
+        # Names derived from archive entries are attacker-controlled, so
+        # one bad entry must not turn into a javap option or a path.
+        if not names or not all(_is_valid_java_identifier(n) for n in names):
             return None
         javap = self._resolve_javap_binary()
         if javap is None:
@@ -727,7 +737,7 @@ class JvmSourceAnalyser(BaseAnalyser):
                 # nothing outside the class can reference them, so their
                 # removal is not a linkage risk and including them would
                 # only add drift noise.
-                [javap, "-package", "-classpath", str(jar_path), class_name],
+                [javap, "-package", "-classpath", str(jar_path), *names],
                 capture_output=True,
                 timeout=_JAVAP_TIMEOUT_SEC,
                 shell=False,

@@ -23,6 +23,9 @@ def test_deep_inspection_5x2_jars_under_60s(tmp_path):
     )
 
     def fake_javap(jar_path, class_name):
+        # The differ now hands javap a batch of enumerated class names.
+        if not isinstance(class_name, str):
+            class_name = class_name[0] if class_name else "X"
         # Cheap signature surface so the test is bound by orchestration
         # cost, not by parser cost.
         return f"public class com.example.{class_name} {{\n  public void m();\n}}\n"
@@ -34,7 +37,11 @@ def test_deep_inspection_5x2_jars_under_60s(tmp_path):
         for ver in ("1.0", "2.0"):
             d = m2 / _g.replace(".", "/") / _a / ver
             d.mkdir(parents=True)
-            (d / f"{_a}-{ver}.jar").write_bytes(b"")
+            import zipfile
+            with zipfile.ZipFile(d / f"{_a}-{ver}.jar", "w") as zf:
+                # A real archive: the differ enumerates entries to decide
+                # which classes to inspect.
+                zf.writestr(f"com/example/{_a}.class", b"\xca\xfe\xba\xbe")
 
     deps = [
         Dependency(name=c, version="2.0", status=DependencyStatus.IN_USE,

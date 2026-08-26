@@ -70,16 +70,45 @@ def test_javap_public_signatures_parses_method():
     assert "utilityMethod" in {s.member_name for s in signatures}
 
 
+def _unparsed_lines(stdout: str) -> list[str]:
+    """Declaration lines that match none of the parser's patterns.
+
+    Line-level, deliberately. Comparing *counts* of lines against
+    signatures would be wrong: a descriptor holds only the argument
+    list, so covariant overrides — ``StringBuilder append(int)`` beside
+    ``AbstractStringBuilder append(int)`` — legitimately collapse to one
+    signature. What must never happen is a line the parser cannot read
+    at all.
+    """
+    from scarno.analysers.java.abi_diff import (
+        _JAVAP_FIELD_RE,
+        _JAVAP_HEADER_RE,
+        _JAVAP_METHOD_RE,
+    )
+
+    out = []
+    for line in _declaration_lines(stdout):
+        if line.strip() == "static {};":
+            continue  # a class initialiser is not a member
+        if (
+            _JAVAP_METHOD_RE.match(line)
+            or _JAVAP_FIELD_RE.match(line)
+            or _JAVAP_HEADER_RE.match(line)
+        ):
+            continue
+        out.append(line.strip())
+    return out
+
+
 @pytest.mark.requirement("FR-276")
 def test_no_declaration_is_silently_dropped():
     """The invariant that makes a parser regression fail the build: every
-    ';'-terminated line javap emits must become a signature."""
-    parsed = javap_public_signatures(_MIXED_ACCESS)
-    emitted = _declaration_lines(_MIXED_ACCESS)
-
-    assert len(parsed) == len(emitted), (
-        f"parsed {len(parsed)} of {len(emitted)} declarations — "
-        f"a member shape is being dropped"
+    declaration line javap emits must be readable by some pattern."""
+    assert _unparsed_lines(_MIXED_ACCESS) == []
+    # And nothing is lost on the way to signatures for this fixture,
+    # which has no covariant overrides.
+    assert len(javap_public_signatures(_MIXED_ACCESS)) == len(
+        _declaration_lines(_MIXED_ACCESS)
     )
 
 
@@ -248,3 +277,113 @@ class TestProtectedRemovalIsDetectedEndToEnd:
         diff = signature_diff(declared=declared, resolved=resolved)
 
         assert "read" in {s.member_name for s in diff.removed}
+
+
+def _javap_binary() -> str | None:
+    """Locate a real javap, or None. JAVA_HOME first, then PATH."""
+    import os
+    import shutil
+    from pathlib import Path
+
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        candidate = Path(java_home) / "bin" / "javap"
+        if candidate.is_file():
+            return str(candidate)
+    found = shutil.which("javap")
+    if found:
+        import subprocess
+        probe = subprocess.run(
+            [found, "-version"], capture_output=True, text=True,
+        )
+        if probe.returncode == 0:
+            return found
+    return None
+
+
+class TestAgainstRealJavap:
+    """Fixtures are written from what javap is believed to emit; these
+    run the real thing. Skipped when no JDK is present, so CI without
+    one still passes, but a JDK-bearing environment gets the stronger
+    check.
+
+    The JDK's own classes are used as the corpus: they cover every shape
+    at once — checked exceptions, generics, varargs, arrays, nested
+    types, interface defaults, constants and every access level.
+    """
+
+    CORPUS = [
+        "java.io.InputStream",       # checked exceptions throughout
+        "java.util.ArrayList",       # generics, nested classes
+        "java.util.HashMap",
+        "java.lang.Thread",          # large, every access level
+        "java.util.zip.ZipFile",
+        "java.net.URL",
+        "java.util.Comparator",      # interface: default + static methods
+        "java.util.Map",
+        "javax.xml.XMLConstants",    # constants only
+        "java.lang.StringBuilder",   # covariant overrides
+    ]
+
+    @pytest.mark.requirement("FR-276")
+    def test_every_declaration_line_parses(self):
+        import subprocess
+
+        javap = _javap_binary()
+        if javap is None:
+            pytest.skip("no JDK available")
+
+        failures: dict[str, list[str]] = {}
+        checked = 0
+        for class_name in self.CORPUS:
+            result = subprocess.run(
+                [javap, "-package", class_name],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                continue
+            checked += len(_declaration_lines(result.stdout))
+            unparsed = _unparsed_lines(result.stdout)
+            if unparsed:
+                failures[class_name] = unparsed
+
+        assert checked > 200, (
+            f"corpus produced only {checked} declarations — javap did not "
+            f"behave as expected"
+        )
+        assert not failures, (
+            "javap emitted declarations the parser cannot read: "
+            + "; ".join(
+                f"{cls}: {lines[:3]}" for cls, lines in failures.items()
+            )
+        )
+
+    @pytest.mark.requirement("FR-275")
+    def test_package_level_reveals_more_than_public(self):
+        """The flag change is only worth anything if -package really does
+        expose members -public hides. Measured, not assumed."""
+        import subprocess
+
+        javap = _javap_binary()
+        if javap is None:
+            pytest.skip("no JDK available")
+
+        target = "java.lang.Thread"
+        public_out = subprocess.run(
+            [javap, "-public", target], capture_output=True, text=True,
+        )
+        package_out = subprocess.run(
+            [javap, "-package", target], capture_output=True, text=True,
+        )
+        if public_out.returncode or package_out.returncode:
+            pytest.skip("javap could not read the corpus class")
+
+        public_sigs = javap_public_signatures(public_out.stdout)
+        package_sigs = javap_public_signatures(package_out.stdout)
+
+        assert len(package_sigs) > len(public_sigs), (
+            f"-package ({len(package_sigs)}) exposed no more than -public "
+            f"({len(public_sigs)})"
+        )
+        # Everything -public showed is still present at -package.
+        assert public_sigs <= package_sigs

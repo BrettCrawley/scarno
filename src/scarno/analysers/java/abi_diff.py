@@ -49,6 +49,7 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Callable
 
@@ -65,6 +66,7 @@ from scarno.models import (
 from scarno.security import (
     PathEscapeError,
     resolve_and_confine,
+    safe_jar_entries,
     sanitise,
 )
 
@@ -337,6 +339,57 @@ def signature_diff(
     )
 
 
+# ── JAR class enumeration (issue #2) ────────────────────────────────────────
+
+# javap is handed this many class names per invocation. Batching matters
+# because javap pays JVM startup per process; a batch also keeps a single
+# argv from growing without bound on a large archive.
+_JAVAP_CLASS_BATCH = 200
+# Ceiling on classes inspected per JAR. Reached only by very large
+# archives; when it bites the shortfall is REPORTED, never silent — a
+# quiet truncation here would reintroduce exactly the class of false
+# negative this enumeration exists to remove.
+_MAX_CLASSES_PER_JAR = 4_000
+
+
+def jar_class_names(jar_path: Path) -> list[str]:
+    """Return the fully-qualified class names declared in ``jar_path``.
+
+    Replaces guessing a single ``<group>.<Artifact>`` probe, which named
+    a class that does not exist for most real coordinates, so ``javap``
+    failed and the whole diff was skipped.
+
+    Package-private and nested classes are INCLUDED. A consumer can
+    declare its own class in the same package and reference a
+    package-private type, so its removal is a ``NoClassDefFoundError``;
+    and a public nested type such as ``Map.Entry`` is squarely part of
+    the API. Neither is distinguishable from a class file's name, which
+    is why the filter below is by role rather than by access.
+
+    ``module-info`` / ``package-info`` are descriptors, not types. The
+    ``META-INF/versions/N/`` prefixes of a multi-release JAR are skipped
+    because the base-version class is already listed.
+
+    Ordering is sorted so a run is reproducible.
+    """
+    try:
+        entries = safe_jar_entries(jar_path)
+    except (ValueError, OSError):
+        return []
+    names: set[str] = set()
+    for entry in entries:
+        if entry.startswith("META-INF/"):
+            continue
+        if not entry.endswith(".class"):
+            continue
+        stem = entry[: -len(".class")]
+        tail = stem.rsplit("/", 1)[-1]
+        if tail in ("module-info", "package-info"):
+            continue
+        names.add(stem.replace("/", "."))
+    return sorted(names)
+
+
 # ── Deterministic finding sort (R-Phase9-01) ────────────────────────────────
 
 
@@ -379,7 +432,10 @@ def _finding_sort_key(
 # Callable signature: (jar_path: Path, class_name: str) -> str | None.
 # Returns javap stdout on success, None on timeout / parse error /
 # binary missing. Caller must NEVER receive an exception from this.
-JavapCallable = Callable[[Path, str], str | None]
+# Accepts one class name or a batch of them. javap pays JVM startup per
+# process, so enumerating a JAR's classes one process at a time is not
+# affordable; the batch form is what the differ uses.
+JavapCallable = Callable[[Path, "str | Sequence[str]"], str | None]
 
 
 class CrossVersionAbiDiffer:
@@ -534,6 +590,13 @@ class CrossVersionAbiDiffer:
                 work_items.append((coord, n.declared_version, resolved_version))
 
         findings: list[Finding] = []
+        # Issue #3 — a library split moves classes between artefacts. The
+        # differ compares ONE coordinate across two versions, so a
+        # relocated class reads as removed even though it is still on the
+        # classpath via a sibling artefact. Index which classes the
+        # RESOLVED graph provides, so a removal is judged against the whole
+        # classpath rather than against one coordinate.
+        provider_index = self._build_class_provider_index(result)
 
         def _process_one(item: tuple[str, str, str]) -> None:
             coord, declared_version, resolved_version = item
@@ -578,22 +641,43 @@ class CrossVersionAbiDiffer:
                 if "remote" in (declared_provenance, resolved_provenance)
                 else "local"
             )
-            # The JAR's primary class is conventionally the
-            # ``<group>.<artifact>`` head; we ask javap for the package
-            # via its short name. The injected helper validates the
-            # class name internally.
-            class_name = self._class_name_from_coord(coord)
-            declared_stdout = self._invoke_javap(declared_jar, class_name)
-            resolved_stdout = self._invoke_javap(resolved_jar, class_name)
-            if declared_stdout is None or resolved_stdout is None:
+            # Inspect the classes the JARs actually declare. The old
+            # ``<group>.<Artifact>`` probe was a guess that named no
+            # real class for most coordinates, so javap failed and the
+            # diff was skipped entirely (issue #2).
+            declared_classes = jar_class_names(declared_jar)
+            resolved_classes = jar_class_names(resolved_jar)
+            if not declared_classes and not resolved_classes:
+                with self._findings_lock:
+                    result.errors.append(
+                        f"abi-diff: no classes listed in either JAR for "
+                        f"{sanitise(coord)}; skipping."
+                    )
+                return
+            for label, names in (
+                ("declared", declared_classes), ("resolved", resolved_classes),
+            ):
+                if len(names) > _MAX_CLASSES_PER_JAR:
+                    with self._findings_lock:
+                        result.errors.append(
+                            f"abi-diff: {sanitise(coord)} {label} JAR "
+                            f"declares {len(names)} classes; inspecting the "
+                            f"first {_MAX_CLASSES_PER_JAR}. Removals in the "
+                            f"remainder are NOT reported."
+                        )
+            declared_sigs = self._signatures_for(
+                declared_jar, declared_classes[:_MAX_CLASSES_PER_JAR],
+            )
+            resolved_sigs = self._signatures_for(
+                resolved_jar, resolved_classes[:_MAX_CLASSES_PER_JAR],
+            )
+            if not declared_sigs and not resolved_sigs:
                 with self._findings_lock:
                     result.errors.append(
                         f"abi-diff: javap returned no output for "
                         f"{sanitise(coord)}; skipping."
                     )
                 return
-            declared_sigs = javap_public_signatures(declared_stdout)
-            resolved_sigs = javap_public_signatures(resolved_stdout)
             diff = signature_diff(
                 declared=declared_sigs, resolved=resolved_sigs,
             )
@@ -604,6 +688,7 @@ class CrossVersionAbiDiffer:
                 diff=diff,
                 source_symbols=source_symbols.get(coord, set()),
                 provenance=comparison_provenance,
+                provider_index=provider_index,
             )
             with self._findings_lock:
                 findings.extend(produced)
@@ -618,6 +703,61 @@ class CrossVersionAbiDiffer:
         return findings
 
     # ── Helpers ─────────────────────────────────────────────────────────────
+
+    def _build_class_provider_index(
+        self, result: AnalysisResult
+    ) -> dict[str, str]:
+        """``{FQCN: coordinate}`` over the RESOLVED version of every dep.
+
+        When a library is split for modularity its classes move between
+        artefacts. Diffing one coordinate across two versions then shows
+        every relocated class as removed, and ``TS-ABI-RUNTIME-RISK``
+        claims a NoSuchMethodError that cannot happen — the class is
+        still on the classpath, just shipped by a sibling artefact.
+
+        Only class-level presence is indexed. Listing an archive needs no
+        ``javap``, so this is cheap; and it is deliberately treated as
+        necessary-but-not-sufficient by the caller, because a class can
+        move AND lose the member.
+
+        Only resolved versions belong here: the declared side is what is
+        being diffed against.
+        """
+        index: dict[str, str] = {}
+        for node in (result.versioned_nodes or []):
+            if not node.is_resolved or not node.declared_version:
+                continue
+            jar_path, _ = self._resolve_jar(
+                node.canonical, node.declared_version
+            )
+            if jar_path is None or not jar_path.exists():
+                continue
+            for fqcn in jar_class_names(jar_path):
+                # First writer wins: a class provided by two artefacts is
+                # already ambiguous, and naming either is enough to show
+                # the symbol has not left the classpath.
+                index.setdefault(fqcn, node.canonical)
+        return index
+
+    def _signatures_for(
+        self, jar_path: Path, class_names: list[str]
+    ) -> set[JavaSignature]:
+        """Parse the ABI surface of ``class_names`` out of ``jar_path``.
+
+        javap is invoked in batches because it pays JVM startup per
+        process; one process per class would make enumeration
+        unaffordable on any real archive. A batch that fails — a class
+        javap cannot read, say — costs only that batch, so one bad entry
+        does not discard the whole JAR.
+        """
+        out: set[JavaSignature] = set()
+        for start in range(0, len(class_names), _JAVAP_CLASS_BATCH):
+            batch = class_names[start:start + _JAVAP_CLASS_BATCH]
+            stdout = self._invoke_javap(jar_path, batch)
+            if stdout is None:
+                continue
+            out |= javap_public_signatures(stdout)
+        return out
 
     def _class_name_from_coord(self, coordinate: str) -> str:
         """Construct a probe FQCN for javap. We don't know which class
@@ -643,6 +783,7 @@ class CrossVersionAbiDiffer:
         diff: AbiDiffResult,
         source_symbols: set[str],
         provenance: str = "local",
+        provider_index: dict[str, str] | None = None,
     ) -> list[Finding]:
         """Convert an :class:`AbiDiffResult` into Finding objects. For
         each REMOVED / CHANGED symbol that intersects ``source_symbols``
@@ -666,7 +807,23 @@ class CrossVersionAbiDiffer:
             *(("CHANGED", s) for s in sorted(diff.changed, key=_signature_sort_key)),
             *(("ADDED", s) for s in sorted(diff.added, key=_signature_sort_key)),
         ]
+        providers = provider_index or {}
         for action, sig in risk_classes:
+            # Issue #3 — a class absent from the resolved JAR but still
+            # provided by another resolved artefact has been RELOCATED by
+            # a library split, not removed. Claiming NoSuchMethodError for
+            # it is a false positive, so it is reported as drift naming
+            # where the class went.
+            #
+            # Class-level presence is necessary, not sufficient: the class
+            # may have moved and dropped the member. So this downgrades
+            # the finding rather than dropping it, and says so.
+            relocated_to = (
+                providers.get(sig.fqcn) if action == "REMOVED" else None
+            )
+            if relocated_to is not None and relocated_to == coord:
+                # Same coordinate provides it — not a relocation.
+                relocated_to = None
             symbol_id = f"{sig.fqcn}.{sig.member_name}"
             # Fields carry a type descriptor, members a parameter list.
             symbol_display = (
@@ -678,7 +835,34 @@ class CrossVersionAbiDiffer:
                 symbol_id == ref or ref.endswith("." + sig.member_name)
                 for ref in source_symbols
             )
-            if action == "REMOVED" and is_called:
+            if relocated_to is not None:
+                out.append(
+                    Finding(
+                        rule_id="TS-ABI-DRIFT",
+                        kind=FindingKind.ABI_DRIFT,
+                        severity=FindingSeverity.MEDIUM,
+                        file_path="",
+                        line=0,
+                        snippet="",
+                        message=(
+                            f"{sanitise(symbol_display)} is no longer in "
+                            f"{sanitise(coord)} at resolved "
+                            f"{sanitise(resolved_version)}, but "
+                            f"{sanitise(sig.fqcn)} is still provided by "
+                            f"{sanitise(relocated_to)} — the class moved "
+                            f"between artefacts rather than being removed."
+                        ),
+                        remediation=(
+                            "Usually a library split; the symbol is still "
+                            "on the classpath. Confirm the member itself "
+                            "still exists at the new location — a class "
+                            "can move AND lose a member."
+                        ),
+                        package_hint=sanitise(coord),
+                        provenance=provenance,
+                    )
+                )
+            elif action == "REMOVED" and is_called:
                 out.append(
                     Finding(
                         rule_id="TS-ABI-RUNTIME-RISK",

@@ -586,7 +586,20 @@ def safe_jar_entries(jar_path: str | Path) -> list[str]:
             f"JAR {jar_path!s} declares {declared} entries "
             f"(limit {MAX_JAR_ENTRIES})"
         )
-    with zipfile.ZipFile(str(jar_path), "r") as zf:
+    # A malformed archive raises zipfile.BadZipFile, which is neither
+    # ValueError nor OSError — so every caller's ``except (ValueError,
+    # OSError)`` missed it and a corrupt or hostile JAR propagated out
+    # and ended the run. Normalised here, in the wrapper whose whole
+    # purpose is to make JAR reading safe, so the documented contract
+    # (ValueError / OSError) actually holds.
+    try:
+        zf_ctx = zipfile.ZipFile(str(jar_path), "r")
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"JAR {jar_path!s} is not a readable archive") from exc
+    # ``ZipFile()`` reads the whole central directory while constructing,
+    # so a malformed archive fails above; ``infolist()`` only hands back
+    # what was already parsed and cannot raise on its own.
+    with zf_ctx as zf:
         infos = zf.infolist()
         # Re-checked against what was actually parsed, because the
         # pre-check above is advisory and may have been lied to.

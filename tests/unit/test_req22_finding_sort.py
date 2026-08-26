@@ -13,6 +13,22 @@ from __future__ import annotations
 import pytest
 
 
+def _write_jar(path, class_fqcns=("com.thirdparty.Helper",)):
+    """Write a minimal but REAL jar declaring the given classes.
+
+    The differ enumerates the archive to decide which classes to inspect,
+    so a zero-byte placeholder yields nothing to diff. The bytes of each
+    entry are irrelevant — only the entry names are read.
+    """
+    import zipfile
+
+    with zipfile.ZipFile(path, "w") as zf:
+        for fqcn in class_fqcns:
+            zf.writestr(fqcn.replace(".", "/") + ".class", b"\xca\xfe\xba\xbe")
+    return path
+
+
+
 def _differ(tmp_path):
     from scarno.analysers.java.abi_diff import CrossVersionAbiDiffer
 
@@ -149,7 +165,7 @@ def test_findings_sorted_after_diff_all(tmp_path):
     for ver in ("1.2.0", "1.5.0"):
         jd = m2 / "com" / "thirdparty" / "helper" / ver
         jd.mkdir(parents=True)
-        (jd / f"helper-{ver}.jar").write_bytes(b"")
+        _write_jar(jd / f"helper-{ver}.jar", ["com.thirdparty.Helper"])
 
     def run() -> list[str]:
         differ = CrossVersionAbiDiffer(m2_root=m2, invoke_javap=fake_javap)
