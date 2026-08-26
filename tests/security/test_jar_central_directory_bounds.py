@@ -39,8 +39,13 @@ class TestEntryCapEnforcedBeforeMaterialisation:
     @pytest.mark.requirement("SEC-NEW-02")
     def test_declared_count_rejects_without_opening(self, tmp_path, monkeypatch):
         """The refusal must come from the pre-check, not from infolist().
-        Making ZipFile explode proves nothing opened the archive."""
-        jar = _jar(tmp_path / "many.jar", MAX_JAR_ENTRIES + 50)
+        Making ZipFile explode proves nothing opened the archive.
+
+        The cap is lowered for the test so the fixture stays small; what
+        is under test is the ordering of the guards, not the number.
+        """
+        monkeypatch.setattr("scarno.security.MAX_JAR_ENTRIES", 50)
+        jar = _jar(tmp_path / "many.jar", 100)
 
         def _explode(*a, **kw):
             raise AssertionError(
@@ -63,9 +68,10 @@ class TestEntryCapEnforcedBeforeMaterialisation:
         assert all(e.endswith(".class") for e in entries)
 
     @pytest.mark.requirement("SEC-NEW-02")
-    def test_entry_cap_boundary_is_inclusive(self, tmp_path):
-        jar = _jar(tmp_path / "edge.jar", MAX_JAR_ENTRIES)
-        assert len(safe_jar_entries(jar)) == MAX_JAR_ENTRIES
+    def test_entry_cap_boundary_is_inclusive(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("scarno.security.MAX_JAR_ENTRIES", 200)
+        jar = _jar(tmp_path / "edge.jar", 200)
+        assert len(safe_jar_entries(jar)) == 200
 
     @pytest.mark.requirement("SEC-NEW-02")
     def test_post_check_still_catches_an_understated_count(
@@ -74,7 +80,8 @@ class TestEntryCapEnforcedBeforeMaterialisation:
         """The pre-check is advisory. If an archive lies about its entry
         count, the check against what zipfile actually parsed must still
         refuse it."""
-        jar = _jar(tmp_path / "liar.jar", MAX_JAR_ENTRIES + 50)
+        monkeypatch.setattr("scarno.security.MAX_JAR_ENTRIES", 50)
+        jar = _jar(tmp_path / "liar.jar", 100)
         monkeypatch.setattr(
             "scarno.security._declared_entry_count", lambda p: 1,
         )
@@ -121,14 +128,15 @@ class TestJarSizeCap:
 
 class TestRefusalIsReported:
     @pytest.mark.requirement("SEC-NEW-02")
-    def test_inventory_records_why_a_jar_was_skipped(self, tmp_path):
+    def test_inventory_records_why_a_jar_was_skipped(self, tmp_path, monkeypatch):
         """Swallowing the ValueError turned a resource guard into
         silently wrong output: the dep vanishes from the inventory and is
         classified on incomplete evidence with nothing said."""
         from scarno.analysers.java.source_analyser import _build_jar_inventory_map
         from scarno.models import Dependency, DependencyStatus
 
-        jar = _jar(tmp_path / "lib-1.0.jar", MAX_JAR_ENTRIES + 5)
+        monkeypatch.setattr("scarno.security.MAX_JAR_ENTRIES", 20)
+        jar = _jar(tmp_path / "lib-1.0.jar", 50)
         dep = Dependency(
             name="com.example:lib", version="1.0",
             status=DependencyStatus.UNCERTAIN, reason="", ecosystem="maven",
@@ -192,3 +200,53 @@ class TestUnreadableJarStaysAnOrdinaryMiss:
 
         assert "com.example:lib" not in inventory
         assert not any("jar-inventory" in e for e in errors), errors
+
+
+@pytest.mark.performance
+class TestCeilingIsAffordable:
+    """The entry ceiling is the cap that decides which real archives get
+    analysed, so the memory it admits is worth pinning at full scale
+    rather than only in arithmetic.
+
+    It was raised from 10,000 to 100,000 because the old value bit at
+    roughly 34 MiB of ordinary class content — below the largest jars in
+    a normal dependency cache — and everything over it was dropped from
+    the inventory and classified on incomplete evidence.
+    """
+
+    @pytest.mark.requirement("SEC-NEW-02")
+    def test_a_full_ceiling_archive_lists_within_budget(self, tmp_path):
+        import tracemalloc
+
+        jar = _jar(tmp_path / "ceiling.jar", MAX_JAR_ENTRIES, name_len=4)
+
+        tracemalloc.start()
+        try:
+            entries = safe_jar_entries(jar)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        assert len(entries) == MAX_JAR_ENTRIES
+        # ~600 bytes of peak heap per entry, measured at 57 MiB for
+        # 100,050. Generous headroom for interpreter differences, but far
+        # below the ~2 GiB the bomb case reached with millions of entries.
+        assert peak < 256 * 1024 * 1024, (
+            f"listing {MAX_JAR_ENTRIES:,} entries peaked at "
+            f"{peak / 1048576:.0f} MiB"
+        )
+
+    @pytest.mark.requirement("SEC-NEW-04")
+    def test_size_cap_binds_first_for_class_heavy_archives(self):
+        """MAX_JAR_BYTES stays at 128 MiB, so for ordinary class content
+        — about 3.4 KiB an entry — it is reached near 37,000 entries and
+        is the effective limit well before the entry ceiling. The two
+        caps govern different shapes: this one archives with many small
+        entries, the size cap archives with fewer large ones.
+        """
+        bytes_per_class_entry = 3.4 * 1024
+        entries_at_size_cap = MAX_JAR_BYTES / bytes_per_class_entry
+        assert entries_at_size_cap < MAX_JAR_ENTRIES, (
+            "the entry ceiling now binds before the size cap for ordinary "
+            "class content — revisit which limit is doing the work"
+        )

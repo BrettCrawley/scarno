@@ -31,7 +31,21 @@ from pathlib import Path
 # Resource ceilings (ARCH-PERF-001, SEC-NEW-02, SEC-NEW-04).
 MAX_FILE_BYTES: int = 10 * 1024 * 1024
 MAX_DEP_NAME_LEN: int = 256
-MAX_JAR_ENTRIES: int = 10_000
+# Entry ceiling for a JAR listing. This is the cap that actually decides
+# which real-world archives get analysed: for ordinary class content an
+# entry costs roughly 3.4 KiB of archive, so the old 10,000 bit at about
+# 34 MiB — below the largest jars in a normal dependency cache, and far
+# below any shaded uber-JAR. Everything over it was dropped from the JAR
+# inventory and classified on incomplete evidence.
+#
+# 100,000 is affordable: ``zipfile`` costs ~600 bytes of peak heap per
+# entry, measured at 57 MiB for 100,050 entries, against the ~2 GiB the
+# zip-bomb case reached with millions. Note that :data:`MAX_JAR_BYTES`
+# is the binding limit before this one for class-heavy archives — at
+# 3.4 KiB an entry, 128 MiB is reached around 37,000 entries — so this
+# ceiling governs archives with many small entries, and the size cap
+# governs the rest.
+MAX_JAR_ENTRIES: int = 100_000
 MAX_JAR_ENTRY_BYTES: int = 50 * 1024 * 1024
 # Absolute ceiling on a JAR we will open at all. JARs were exempt from
 # every size cap, and ``zipfile.ZipFile()`` builds a ``ZipInfo`` for

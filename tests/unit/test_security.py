@@ -228,13 +228,21 @@ class TestCheckRootPrivilege:
 class TestSafeJarEntries:
     @pytest.mark.requirement("SEC-NEW-02")
     @pytest.mark.security
-    def test_jar_with_too_many_entries_raises(self, tmp_path):
-        """A JAR with more entries than MAX_ENTRIES must raise ValueError."""
+    def test_jar_with_too_many_entries_raises(self, tmp_path, monkeypatch):
+        """A JAR with more entries than MAX_JAR_ENTRIES must raise.
+
+        The cap is lowered for the test rather than building an archive
+        just over the real ceiling: what is under test is that exceeding
+        the cap is refused, not what the cap happens to be. Hard-coding
+        the number here meant raising the ceiling silently turned this
+        into a test that the limit is *not* enforced.
+        """
         import zipfile
 
+        monkeypatch.setattr("scarno.security.MAX_JAR_ENTRIES", 100)
         jar = tmp_path / "bomb.jar"
         with zipfile.ZipFile(jar, "w") as zf:
-            for i in range(10_001):
+            for i in range(101):
                 zf.writestr(f"com/example/Class{i}.class", b"")
         with pytest.raises(ValueError, match="entries"):
             safe_jar_entries(jar)
