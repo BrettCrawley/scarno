@@ -404,6 +404,8 @@ FUNCTIONAL_REQUIREMENTS: frozenset[str] = frozenset(
         # gitignore-consistent-discovery plan
         "FR-278",  # --gitignore classification mode: uncertain (default) / include / exclude; --no-gitignore = include
         "FR-279",  # shared discovery: tracked / ignored / rule-only sets, structural environment pruning, confinement
+        # SARIF accepted by GitHub Code Scanning
+        "FR-280",  # SARIF validates against the 2.1.0 schema and every result has a physicalLocation
         # COMP-005 — REQ-24 GDPR compliance touchpoint (consent gate + disclosure)
         "COMP-005",  # GDPR — operator IP disclosure to index hosts; consent via --allow-remote-fetch + PUC-006/008
     }

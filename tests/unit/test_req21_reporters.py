@@ -30,6 +30,7 @@ def _result_with_maven_pin():
                     "substitutes for excluded transitive of com.example:lib-y"
                 ),
                 ecosystem="maven",
+                source="pom.xml",  # declaring file, as an analyser sets it
             ),
         ],
         dep_edges=[

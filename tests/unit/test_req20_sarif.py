@@ -23,7 +23,8 @@ def test_sarif_TS_DEP_MULTI_VERSION_emitted():
         project_type="java",
         project_path="/tmp/x",
         dependencies=[
-            Dependency(name="x", version=None, status=DependencyStatus.IN_USE, reason=""),
+            Dependency(name="x", version=None, status=DependencyStatus.IN_USE, reason="",
+                       source="pom.xml", ecosystem="maven"),
         ],
         dep_edges=[
             DepEdge(parent="", child="x", declared_version="1.1"),

@@ -258,6 +258,7 @@ class TestInjectionPrevention:
                     [],
                     0,
                     0,
+                    source="requirements.txt",  # declaring file, as an analyser sets it
                 )
             ],
             errors=[],
@@ -319,6 +320,7 @@ class TestInjectionPrevention:
                     [],
                     0,
                     0,
+                    source="requirements.txt",  # declaring file, as an analyser sets it
                 )
             ],
             errors=[],

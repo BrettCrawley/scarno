@@ -61,6 +61,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `shutil.which`. No change to analysis output.
 
 ### Fixed
+- **GitHub Code Scanning rejected the action's SARIF report.** Two things broke
+  the upload. Pin-override and multi-version results put `logicalLocations`
+  directly on the result, which the SARIF 2.1.0 schema forbids, so validation
+  failed for the whole file. And GitHub refuses any result without a
+  `physicalLocation`, which undeclared imports, pin-overrides, multi-version
+  coordinates and `--deep-inspection` ABI findings all lacked. Every result now
+  carries one: the file that declares the dependency, or for an undeclared
+  import the manifest of its ecosystem. Logical locations moved inside
+  `locations[]`. A result with no file anywhere to attach it to is left out of
+  the SARIF, counted in `run.properties.resultsWithoutLocation` and named in a
+  run notification. `invocations[].workingDirectory` is now a `file://` URI,
+  and artifact URIs are percent-encoded, so paths with spaces or non-ASCII
+  characters validate. The tests validate against the official OASIS schema
+  (FR-280). The action-smoke workflow never uploads, which is why CI did not
+  catch this.
 - **A method whose only change was its return type was invisible to the
   cross-version ABI diff.** `JavaSignature` did not record return types, so
   `int size(String)` → `long size(String)` matched as identical. It is a

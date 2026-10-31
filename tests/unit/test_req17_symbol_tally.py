@@ -185,6 +185,7 @@ class TestReporterRendering:
             ],
             entry_points_used=1, entry_points_total=1,
             ecosystem="pypi",
+            source="requirements.txt",  # declaring file, as an analyser sets it
         )
         result = AnalysisResult(
             project_type="python", project_path="/p",

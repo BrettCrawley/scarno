@@ -31,6 +31,7 @@ def _result_with_dynamic_pin():
                     "(useVersion called with non-literal argument)"
                 ),
                 ecosystem="gradle",
+                source="build.gradle",  # declaring file, as an analyser sets it
             ),
         ],
         dep_edges=[
@@ -60,6 +61,7 @@ def _result_with_static_gradle_pin():
                 pin_override_kind="GRADLE_FORCE",
                 pin_override_target="force() in resolutionStrategy of :app",
                 ecosystem="gradle",
+                source="build.gradle",  # declaring file, as an analyser sets it
             ),
         ],
         dep_edges=[

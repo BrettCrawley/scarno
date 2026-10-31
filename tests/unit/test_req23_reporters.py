@@ -27,6 +27,7 @@ def _result_with_npm_pin():
                 pin_override_kind="NPM_OVERRIDES",
                 pin_override_target="pinned via overrides to 4.17.21",
                 ecosystem="npm",
+                source="package.json",  # declaring file, as an analyser sets it
             ),
         ],
         dep_edges=[

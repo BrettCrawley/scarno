@@ -27,16 +27,31 @@ Safety:
   * JSON is serialised via ``json.dumps`` (SEC-004) — no f-string
     interpolation into the output.
   * URIs use forward slashes and are POSIX-relative; backslashes in
-    paths (e.g. on Windows) are normalised.
+    paths (e.g. on Windows) are normalised, and characters that are not
+    legal in a URI reference (spaces, non-ASCII) are percent-encoded.
+
+GitHub Code Scanning compatibility:
+  * GitHub validates uploads against the SARIF 2.1.0 schema, so a
+    ``logicalLocations`` key directly on a result rejects the whole
+    file. Logical locations live inside ``result.locations[]``.
+  * GitHub also rejects any result without a ``physicalLocation``
+    ("expected at least one location"), which the schema itself allows.
+    Every result therefore carries one. Dependency results point at the
+    file that declares the dependency, or, for an undeclared import, at
+    the manifest it should be declared in. A result with no file to
+    point at is left out of ``results`` and counted in
+    ``run.properties.resultsWithoutLocation``.
 """
 from __future__ import annotations
 
 import json
+from collections import Counter
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
+from urllib.parse import quote
 
 from scarno import __version__ as _SCARNO_VERSION
 from scarno.findings.rules import RULES
-from scarno.reporters._remote_banner import compute_state
 from scarno.models import (
     AnalysisResult,
     Dependency,
@@ -44,11 +59,16 @@ from scarno.models import (
     Finding,
     FindingSeverity,
 )
+from scarno.reporters._remote_banner import compute_state
 from scarno.security import sanitise
 
 _SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
 _SARIF_VERSION = "2.1.0"
-_INFORMATION_URI = "https://github.com/anthropics/scarno"
+_INFORMATION_URI = "https://github.com/BrettCrawley/scarno"
+# RFC 3986 characters left unencoded in a path: unreserved, sub-delims,
+# ":" and "@" (pchar), plus "/" as the segment separator.
+_URI_PATH_SAFE = "/:@!$&'()*+,;=-._~"
+
 
 # SARIF level mapping. SARIF defines four: "error", "warning", "note", "none".
 _SEVERITY_TO_LEVEL: dict[FindingSeverity, str] = {
@@ -162,8 +182,59 @@ def _clean(value: str) -> str:
 
 
 def _uri(path: str) -> str:
-    """Normalise a file path to a POSIX-relative SARIF URI."""
-    return _clean(path.replace("\\", "/"))
+    """Normalise a file path to a POSIX-relative SARIF URI reference."""
+    return quote(_clean(path.replace("\\", "/")), safe=_URI_PATH_SAFE)
+
+
+def _directory_uri(path: str) -> str:
+    """An absolute directory path as a ``file:`` URI with a trailing slash.
+
+    SARIF 3.4.3 wants ``workingDirectory`` to be an absolute URI. A bare
+    path is not one. Relative paths keep the plain relative form.
+    """
+    cleaned = _clean(path)
+    if PureWindowsPath(cleaned).drive:
+        posix = "/" + cleaned.replace("\\", "/")
+    elif PurePosixPath(cleaned).is_absolute():
+        posix = cleaned
+    else:
+        return _uri(cleaned.rstrip("/\\") + "/")
+    return "file://" + quote(posix.rstrip("/") + "/", safe=_URI_PATH_SAFE)
+
+
+def _dep_file(dep: Dependency) -> str | None:
+    """The file that declares *dep*, or None for a detected-only dep."""
+    if not dep.source or dep.source == "unknown" or dep.source.startswith("detected:"):
+        return None
+    return dep.source.split(":", 1)[0] or None
+
+
+def _manifest_by_ecosystem(deps: list[Dependency]) -> tuple[dict[str, str], str | None]:
+    """The most-used declaring file per ecosystem, plus the overall one.
+
+    An undeclared import has no declaring file. Its natural location is
+    the manifest it should be added to. Ties break alphabetically so the
+    output is deterministic.
+    """
+    per_eco: dict[str, Counter[str]] = {}
+    overall: Counter[str] = Counter()
+    for dep in deps:
+        file_ = _dep_file(dep)
+        if file_ is None:
+            continue
+        per_eco.setdefault((dep.ecosystem or "").lower(), Counter())[file_] += 1
+        overall[file_] += 1
+
+    def _top(c: Counter[str]) -> str:
+        return min(c, key=lambda k: (-c[k], k))
+
+    return {eco: _top(c) for eco, c in per_eco.items()}, (
+        _top(overall) if overall else None
+    )
+
+
+def _file_location(file_: str) -> dict[str, Any]:
+    return {"physicalLocation": {"artifactLocation": {"uri": _uri(file_)}}}
 
 
 def _remote_provenance_summary(result: AnalysisResult) -> dict[str, Any]:
@@ -206,12 +277,19 @@ def _build_dep_rule_descriptor(rule_id: str) -> dict[str, Any]:
     }
 
 
-def _finding_to_result(finding: Finding) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "ruleId": finding.rule_id,
-        "level": _SEVERITY_TO_LEVEL[finding.severity],
-        "message": {"text": _clean(finding.message)},
-        "locations": [
+def _finding_to_result(
+    finding: Finding, fallback_file: str | None = None
+) -> dict[str, Any]:
+    """A finding as a SARIF result.
+
+    A finding with no file (the REQ-22 ABI findings are about a resolved
+    artefact, not a source line) is placed on *fallback_file*, the
+    manifest that declares the package, with no region. With neither, the
+    result has no location and the caller drops it.
+    """
+    locations: list[dict[str, Any]]
+    if finding.file_path:
+        locations = [
             {
                 "physicalLocation": {
                     "artifactLocation": {"uri": _uri(finding.file_path)},
@@ -221,7 +299,16 @@ def _finding_to_result(finding: Finding) -> dict[str, Any]:
                     },
                 }
             }
-        ],
+        ]
+    elif fallback_file is not None:
+        locations = [_file_location(fallback_file)]
+    else:
+        locations = []
+    result: dict[str, Any] = {
+        "ruleId": finding.rule_id,
+        "level": _SEVERITY_TO_LEVEL[finding.severity],
+        "message": {"text": _clean(finding.message)},
+        "locations": locations,
         "properties": {
             "severity": finding.severity.value,
             "kind": finding.kind.value,
@@ -240,15 +327,17 @@ def _finding_to_result(finding: Finding) -> dict[str, Any]:
     return result
 
 
-def _dep_to_result(dep: Dependency) -> dict[str, Any] | None:
+def _dep_to_result(
+    dep: Dependency, fallback_file: str | None = None
+) -> dict[str, Any] | None:
     """Convert an IN_USE/SAFE/UNCERTAIN/UNDECLARED dep to a SARIF result.
 
     IN_USE deps don't become results (nothing to flag); SAFE deps become
     ``note``-level results; UNDECLARED become ``warning``; UNCERTAIN
-    become ``note``. The ``locations`` field is a single synthetic
-    location pointing at the dep-file source (e.g. ``requirements.txt``)
-    when one is known, otherwise omitted (SARIF ``locations`` may be
-    empty for tool-level findings).
+    become ``note``. The ``locations`` field is a single location
+    pointing at the dep-file source (e.g. ``requirements.txt``), or at
+    *fallback_file* for a detected-only dep. GitHub Code Scanning
+    rejects a result without one.
     """
     rule_id_map = {
         DependencyStatus.SAFE: "TS-DEP-SAFE",
@@ -295,18 +384,13 @@ def _dep_to_result(dep: Dependency) -> dict[str, Any] | None:
         "message": {"text": message},
         "properties": properties,
     }
-    # Synthesise a location pointing at the originating dep file when
-    # the source looks like a filename (e.g. ``requirements.txt``,
-    # ``pyproject.toml:project``, ``Dockerfile``).
-    if dep.source and dep.source != "unknown" and not dep.source.startswith("detected:"):
-        file_part = dep.source.split(":", 1)[0]
-        result["locations"] = [
-            {
-                "physicalLocation": {
-                    "artifactLocation": {"uri": _uri(file_part)},
-                }
-            }
-        ]
+    # The location is the declaring file (``requirements.txt``,
+    # ``pyproject.toml:project`` → ``pyproject.toml``, ...). The caller
+    # supplies a fallback for detected-only deps; with neither, the
+    # result has no location and the caller drops it.
+    file_ = _dep_file(dep) or fallback_file
+    if file_ is not None:
+        result["locations"] = [_file_location(file_)]
     return result
 
 
@@ -324,11 +408,31 @@ class SarifReporter:
             _build_dep_rule_descriptor(rule_id) for rule_id in sorted(_DEP_RULES.keys())
         )
 
+        manifest_for_eco, any_manifest = _manifest_by_ecosystem(result.dependencies)
+
+        def _fallback(dep: Dependency) -> str | None:
+            return manifest_for_eco.get((dep.ecosystem or "").lower(), any_manifest)
+
+        def _package_location(name: str, file_: str | None) -> list[dict[str, Any]]:
+            if file_ is None:
+                return []
+            loc = _file_location(file_)
+            loc["logicalLocations"] = [{"name": _clean(name), "kind": "package"}]
+            return [loc]
+
+        deps_by_name: dict[str, Dependency] = {}
+        for dep in result.dependencies:
+            deps_by_name.setdefault(dep.name, dep)
+
         results: list[dict[str, Any]] = []
         for finding in result.findings:
-            results.append(_finding_to_result(finding))
+            hinted = deps_by_name.get(finding.package_hint or "")
+            finding_fallback = (
+                (_dep_file(hinted) or _fallback(hinted)) if hinted else any_manifest
+            )
+            results.append(_finding_to_result(finding, finding_fallback))
         for dep in result.dependencies:
-            converted = _dep_to_result(dep)
+            converted = _dep_to_result(dep, _fallback(dep))
             if converted is not None:
                 results.append(converted)
         # REQ-21 / 21b / 23 — pin-override SARIF results, one per
@@ -371,9 +475,9 @@ class SarifReporter:
                             f"{dep.pin_override_target or ''}"
                         ),
                     },
-                    "logicalLocations": [
-                        {"name": _clean(dep.name), "kind": "package"},
-                    ],
+                    "locations": _package_location(
+                        dep.name, _dep_file(dep) or _fallback(dep)
+                    ),
                     "properties": {
                         "kind": "pin_override",
                         "pinOverrideKind": _clean(
@@ -389,6 +493,10 @@ class SarifReporter:
         # REQ-20 / FR-207 — one TS-DEP-MULTI-VERSION result per
         # coordinate present at >1 declared version.
         for coord in (result.multi_version_coords or []):
+            owner = deps_by_name.get(coord)
+            coord_file = (
+                (_dep_file(owner) or _fallback(owner)) if owner else any_manifest
+            )
             results.append(
                 {
                     "ruleId": "TS-DEP-MULTI-VERSION",
@@ -400,15 +508,21 @@ class SarifReporter:
                             f"detected' for the full table."
                         ),
                     },
-                    "logicalLocations": [
-                        {"name": _clean(coord), "kind": "package"},
-                    ],
+                    "locations": _package_location(coord, coord_file),
                     "properties": {
                         "kind": "multi_version",
                         "coordinate": _clean(coord),
                     },
                 }
             )
+
+        # GitHub Code Scanning rejects the whole upload if any result lacks
+        # a physical location. A result with no file to point at (no
+        # finding file, no manifest anywhere in the run) is dropped and
+        # counted instead.
+        located = [r for r in results if r.get("locations")]
+        without_location = len(results) - len(located)
+        results = located
 
         run: dict[str, Any] = {
             "tool": {
@@ -422,7 +536,9 @@ class SarifReporter:
             "invocations": [
                 {
                     "executionSuccessful": True,
-                    "workingDirectory": {"uri": _uri(result.project_path)},
+                    "workingDirectory": {
+                        "uri": _directory_uri(result.project_path)
+                    },
                 }
             ],
             "results": results,
@@ -430,6 +546,7 @@ class SarifReporter:
                 "projectType": _clean(result.project_type),
                 "projectPath": _clean(result.project_path),
                 "errorCount": len(result.errors),
+                "resultsWithoutLocation": without_location,
                 # REQ-9 — every ecosystem scanned in this run.
                 "languages": [_clean(lang) for lang in result.languages],
                 # REQ-24 / FR-266 — structured banner data on the run
@@ -438,10 +555,20 @@ class SarifReporter:
                 "remoteProvenance": _remote_provenance_summary(result),
             },
         }
-        if result.errors:
-            run["invocations"][0]["toolExecutionNotifications"] = [
-                {"message": {"text": _clean(e)}} for e in result.errors
-            ]
+        notifications: list[dict[str, Any]] = [
+            {"message": {"text": _clean(e)}} for e in result.errors
+        ]
+        if without_location:
+            notifications.append({
+                "level": "warning",
+                "message": {"text": (
+                    f"{without_location} result(s) left out: no file to attach "
+                    "them to, and GitHub Code Scanning rejects a result "
+                    "without one. The JSON report lists them."
+                )},
+            })
+        if notifications:
+            run["invocations"][0]["toolExecutionNotifications"] = notifications
 
         payload: dict[str, Any] = {
             "$schema": _SARIF_SCHEMA,
