@@ -109,6 +109,14 @@ type is now reported as `TS-ABI-*` drift/risk.
 
 ### 4. Fix F23: don't let the analysed repository's `.gitignore` blind the rule engine
 
+> **Superseded (2026-10-31) by `gitignore-consistent-discovery.md`.**
+> Tracing F23 showed that only Python applies `.gitignore`. Every
+> other analyser inherits the setting and drops it, so F23 is fixed
+> together with consistent discovery across all analysers. The new
+> plan also changes the default: usage found only in gitignored files
+> becomes UNCERTAIN, rather than being excluded. The text below is
+> kept as the original proposal.
+
 **Problem.** `.gitignore` is attacker-authored in the PR scenario.
 Honouring it is right for *dependency classification*: ignored build
 output should not count as usage. It is wrong for the *security rule
