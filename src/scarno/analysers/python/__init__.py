@@ -59,7 +59,9 @@ class PythonAnalyser(BaseAnalyser):
             exclude_tests=self.exclude_tests,
         )
         deps, source_errors, findings = analyse_source_files_with_findings(
-            str(root), deps, use_gitignore=self.use_gitignore,
+            str(root), deps,
+            gitignore=self.gitignore,
+            operator_excludes=self.operator_excludes,
             dep_graph=dep_graph,
             exclude_tests=self.exclude_tests,
             user_test_paths=self.test_paths,

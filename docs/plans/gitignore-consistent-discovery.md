@@ -1,6 +1,6 @@
 # Plan: Consistent `.gitignore` handling across every analyser, and closing F23
 
-**Status:** Steps 1–2 done (2026-10-31); steps 3–9 to do. Supersedes
+**Status:** Steps 1–3 done (2026-10-31); F23 closed for Python. Steps 4–9 to do. Supersedes
 workstream 4 of `roadmap-closeout.md`.
 
 ## Context
@@ -318,6 +318,50 @@ IDs are registered in `tests/srtm.py`:
      - a dep used in tracked code is IN_USE in every mode
    - Back-compat: a snapshot under `--gitignore exclude` is
      byte-identical to today's output on every fixture.
+   **Done (2026-10-31).** Python `.py` and notebook discovery run on
+   `core.discovery`. The rules read every set, and the classification
+   mode is honoured. F23 is reproduced and closed: before, the exploit
+   exited 1 with no finding and the generated-code dep reported SAFE;
+   after, it exits 3 with `TS-CE-001` and the dep is UNCERTAIN. Tests:
+   `tests/security/test_gitignore_not_a_detection_gate.py` (SEC-NEW-75,
+   PRV-008, SEC-NEW-76) and `tests/unit/test_gitignore_classification.py`
+   (FR-278).
+
+   **Back-compat check:** we diffed JSON output against the step 2
+   commit for every fixture and every step 1 sample (each in default
+   and `--gitignore exclude`), and for scarno's own tree. All identical
+   except one intended line on Flask, whose `.venv` its own `.gitignore`
+   does not cover.
+
+   Decisions:
+   - **The environment line is emitted only for environments
+     `.gitignore` does not cover.** Every `errors` entry renders as a
+     WARNING (text and Markdown) and counts in SARIF `errorCount`, so a
+     line on every run with a `.venv` would be noise people learn to
+     ignore. Wording: "N installed-environment tree(s) not scanned and
+     not covered by .gitignore — check they are not committed".
+   - **`--gitignore` / `--exclude` stay hidden until step 8,** not step
+     3 as planned. Only Python honours them so far, and `--help` should
+     not document a flag most analysers ignore.
+   - **`--exclude` uses fnmatch semantics**, as `--test-paths` does:
+     `*` also matches `/`.
+   - **The gitignore matcher is loaded in every mode,** INCLUDE
+     included, so the rules and the environment line know what is
+     ignored even when classification counts it.
+   - **Ignored files contribute only direct imports, literal dynamic
+     imports and wildcard imports** to the UNCERTAIN evidence. A
+     non-literal dynamic import in a gitignored file does not make every
+     SAFE dep UNCERTAIN.
+   - **Transitive deps are unaffected.** Their status still comes from
+     the graph.
+   - **UNDECLARED imports still come from tracked files only** (all
+     files under `include`), as before.
+
+   **Pre-existing gap found, not fixed here:** notebook *code cells*
+   never reach `apply_rules`. Only `!pip` / `%pip` magics are
+   rule-scanned, so an `exec(requests.get(...).text)` in a notebook cell
+   is invisible whatever `.gitignore` says. Track it separately.
+
 4. **HTML scanner + CSS.** These are the other two rule-bearing
    analysers. Same pattern and the same test shape, using `TS-CE-012`
    and `TS-CE-007` payloads.

@@ -447,10 +447,46 @@ def test_cli_rejects_bad_mode_and_globs_with_exit_2(
 
 @pytest.mark.requirement("SEC-NEW-76")
 def test_new_options_stay_hidden_until_analysers_honour_them(runner) -> None:
-    """Step 2 adds the options but no analyser reads them yet. Step 3 makes
-    them visible together with the first analyser that honours them."""
+    """The options are parsed and passed to every analyser, but only some
+    analysers honour them so far. They become visible in step 8 of
+    docs/plans/gitignore-consistent-discovery.md, once every analyser does,
+    so --help never documents a flag that half the analysers ignore."""
     from scarno.cli import app
 
     out = runner.invoke(app, ["--help"], env={"COLUMNS": "200"}).output
     assert "--gitignore " not in out.replace("--gitignore include", "")
     assert "--exclude " not in out.replace("--exclude-", "")
+
+
+@pytest.mark.requirement("FR-279")
+def test_unignored_environments_are_counted_separately(tmp_path: Path) -> None:
+    """A gitignored environment is normal. One the tree's .gitignore does
+    not cover is counted apart, so the run can say so."""
+    _write(tmp_path, ".gitignore", ".venv/\n")
+    _write(tmp_path, ".venv/pyvenv.cfg", "")
+    _write(tmp_path, "env/pyvenv.cfg", "")
+    _write(tmp_path, "web/node_modules/x/index.py")
+    found, _ = _discover(tmp_path)
+    assert found.environment_dirs_skipped == 3
+    assert found.environment_dirs_unignored == 2
+
+
+@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.parametrize(
+    ("rel", "patterns", "expected"),
+    [
+        ("vendored/Dockerfile", ("vendored",), True),
+        ("a/b/Dockerfile", ("a/*",), True),
+        # fnmatch semantics, as --test-paths: '*' also matches '/'.
+        ("a/b/Dockerfile", ("*/Dockerfile",), True),
+        ("a/b/Dockerfile", ("a/b/Dockerfile",), True),
+        ("Dockerfile", (), False),
+        ("docker/Dockerfile", ("dock",), False),
+    ],
+)
+def test_is_operator_excluded_matches_path_or_any_parent(
+    rel: str, patterns: tuple[str, ...], expected: bool
+) -> None:
+    from scarno.core.discovery import is_operator_excluded
+
+    assert is_operator_excluded(rel, patterns) is expected

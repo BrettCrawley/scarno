@@ -937,9 +937,10 @@ def main(
             "classification. Same as --gitignore include."
         ),
     ),
-    # FR-278 / SEC-NEW-76 — hidden until the analysers honour them
-    # (docs/plans/gitignore-consistent-discovery.md, step 3). Advertising
-    # them earlier would document flags that do nothing.
+    # FR-278 / SEC-NEW-76 — hidden until every analyser honours them
+    # (docs/plans/gitignore-consistent-discovery.md, step 8). Python does
+    # from step 3; advertising them earlier would document flags that most
+    # analysers still ignore.
     gitignore: str | None = typer.Option(
         None,
         "--gitignore",
@@ -958,7 +959,8 @@ def main(
         help=(
             "Glob (relative to project root) removed from every analyser's "
             "scan, rules included. Repeatable. A pattern matching a "
-            "directory excludes everything under it. Max 64 patterns × 256 "
+            "directory excludes everything under it. fnmatch semantics, as "
+            "--test-paths: '*' also matches '/'. Max 64 patterns × 256 "
             "bytes; no '..' segments; POSIX '/' only."
         ),
         hidden=True,

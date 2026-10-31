@@ -44,11 +44,16 @@ import re
 import sys
 from dataclasses import replace
 from pathlib import Path
-from collections.abc import Callable
 from typing import Any
 
 from scarno.analysers.python.import_aliases import IMPORT_ALIASES
 from scarno.analysers.python.notebook_parser import extract_code_cells
+from scarno.core.discovery import (
+    GitignoreMode,
+    discover,
+    is_operator_excluded,
+    load_gitignore_matcher,
+)
 from scarno.core.test_scope import TestScopeMatcher
 from scarno.findings import apply_rules, load_suppression_config
 from scarno.models import Dependency, DependencyStatus, EntryPoint, Finding
@@ -65,6 +70,28 @@ _VENDOR_DIR_NAMES: frozenset[str] = frozenset(
 )
 
 _STDLIB_NAMES: frozenset[str] = frozenset(sys.stdlib_module_names)
+
+# FR-278 / PRV-008 — fixed texts. Shared with the other analysers as they
+# move onto core.discovery, so a run reports one wording, not several.
+GITIGNORED_ONLY_REASON = (
+    "used only in files excluded by .gitignore (e.g. generated code); "
+    "verify before removing"
+)
+
+
+def gitignored_findings_line(count: int) -> str:
+    return (
+        f"{count} finding(s) came from files the project's .gitignore "
+        f"excludes"
+    )
+
+
+def unignored_environments_line(count: int) -> str:
+    return (
+        f"{count} installed-environment tree(s) not scanned and not "
+        f"covered by .gitignore — check they are not committed"
+    )
+
 
 _EXCLUDED_DIRS: frozenset[str] = frozenset(
     {
@@ -465,84 +492,6 @@ class _ImportVisitor(ast.NodeVisitor):
 # ── File discovery + parsing ─────────────────────────────────────────────────
 
 
-def _load_gitignore_matcher(
-    root: Path, errors: list[str]
-) -> "Callable[[str], bool] | None":
-    """Return a gitignore match function, or ``None`` if unavailable."""
-    try:
-        import gitignorefile  # type: ignore[import-untyped]
-    except ImportError:
-        errors.append(
-            "source_analyser: gitignorefile not installed — "
-            "skipping .gitignore filtering (install with "
-            "`pip install gitignorefile`)"
-        )
-        return None
-    cache: Callable[[str], bool] = gitignorefile.Cache()
-    return cache
-
-
-def _discover_py_files(
-    root: Path,
-    errors: list[str],
-    *,
-    use_gitignore: bool = True,
-    test_matcher: TestScopeMatcher | None = None,
-) -> tuple[list[Path], int]:
-    """Return ``(files, test_skip_count)``.
-
-    REQ-17: ``test_matcher`` skips test paths under ``--exclude-tests``.
-    The skip count is aggregate-only (no per-file paths leaked) so callers
-    can emit a privacy-safe summary line in errors.
-    """
-    py_files: list[Path] = []
-    test_skip_count = 0
-
-    gitignore_match: Callable[[str], bool] | None = None
-    if use_gitignore:
-        gitignore_match = _load_gitignore_matcher(root, errors)
-
-    try:
-        iterator = root.rglob("*.py")
-    except OSError as exc:
-        errors.append(f"source_analyser: tree walk failed — {exc}")
-        return py_files, test_skip_count
-    for raw_path in iterator:
-        rel_parts = raw_path.relative_to(root).parts
-        if any(
-            part in _EXCLUDED_DIRS or part.endswith(".egg-info") for part in rel_parts
-        ):
-            continue
-        if gitignore_match is not None and gitignore_match(str(raw_path)):
-            continue
-        if test_matcher is not None:
-            rel_path_str = "/".join(rel_parts)
-            if test_matcher.is_test_path(rel_path_str):
-                test_skip_count += 1
-                continue
-        try:
-            resolved = resolve_and_confine(raw_path, root)
-        except PathEscapeError:
-            errors.append(
-                f"source_analyser: symlink escape blocked: "
-                f"{'/'.join(rel_parts)}"
-            )
-            continue
-        try:
-            size = resolved.stat().st_size
-        except OSError as exc:
-            errors.append(f"source_analyser: stat failed for {resolved.name} — {exc}")
-            continue
-        if size > MAX_FILE_BYTES:
-            errors.append(
-                f"source_analyser: skipped {'/'.join(rel_parts)} — file too large "
-                f"({size} bytes > {MAX_FILE_BYTES})"
-            )
-            continue
-        py_files.append(resolved)
-    return py_files, test_skip_count
-
-
 def _parse_file(
     path: Path, errors: list[str]
 ) -> tuple[_ImportVisitor, str, ast.AST] | None:
@@ -824,30 +773,20 @@ def _enumerate_entry_points(
 # ── Public coordinator ───────────────────────────────────────────────────────
 
 
-def _parse_notebooks(root: Path, errors: list[str]) -> _ImportVisitor | None:
-    """Parse every ``*.ipynb`` under ``root`` into a single _ImportVisitor.
+def _parse_notebooks(
+    notebooks: list[Path], errors: list[str]
+) -> _ImportVisitor | None:
+    """Parse the given notebooks' code cells into a single _ImportVisitor.
 
-    Returns ``None`` when no notebooks are found; otherwise a visitor
-    whose sets aggregate all notebook code cells. Notebook parse errors
-    append to ``errors``.
+    ``notebooks`` come from :func:`scarno.core.discovery.discover`, so they
+    are already confined and size-checked. Returns ``None`` when the list
+    is empty. Notebook parse errors append to ``errors``.
     """
-    notebooks = list(root.rglob("*.ipynb"))
     if not notebooks:
         return None
     visitor = _ImportVisitor()
     for nb_path in notebooks:
-        rel_parts = nb_path.relative_to(root).parts
-        if any(part in _EXCLUDED_DIRS for part in rel_parts):
-            continue
-        try:
-            resolved = resolve_and_confine(nb_path, root)
-        except PathEscapeError:
-            errors.append(
-                f"source_analyser: symlink escape blocked: "
-                f"{'/'.join(rel_parts)}"
-            )
-            continue
-        cells, nb_errors = extract_code_cells(resolved)
+        cells, nb_errors = extract_code_cells(nb_path)
         errors.extend(nb_errors)
         if not cells.ast_safe_source:
             continue
@@ -918,6 +857,8 @@ def analyse_source_files(
     dep_graph: dict[str, set[str]] | None = None,
     exclude_tests: bool = False,
     user_test_paths: tuple[str, ...] = (),
+    gitignore: GitignoreMode | None = None,
+    operator_excludes: tuple[str, ...] = (),
 ) -> tuple[list[Dependency], list[str]]:
     """Walk the project and update every ``Dependency`` status.
 
@@ -936,6 +877,8 @@ def analyse_source_files(
         dep_graph=dep_graph,
         exclude_tests=exclude_tests,
         user_test_paths=user_test_paths,
+        gitignore=gitignore,
+        operator_excludes=operator_excludes,
     )
     return deps, errors
 
@@ -948,9 +891,20 @@ def analyse_source_files_with_findings(
     dep_graph: dict[str, set[str]] | None = None,
     exclude_tests: bool = False,
     user_test_paths: tuple[str, ...] = (),
+    gitignore: GitignoreMode | None = None,
+    operator_excludes: tuple[str, ...] = (),
 ) -> tuple[list[Dependency], list[str], list[Finding]]:
     """Three-tuple variant of :func:`analyse_source_files` that also
-    returns the REQ-3c findings surfaced during the scan."""
+    returns the REQ-3c findings surfaced during the scan.
+
+    ``gitignore`` (FR-278) selects how classification treats gitignored
+    files. When it is ``None`` it is derived from the legacy
+    ``use_gitignore`` (False means INCLUDE). The security rules ignore it:
+    gitignored files are always rule-scanned (SEC-NEW-75, F23).
+    """
+    mode = gitignore if gitignore is not None else (
+        GitignoreMode.UNCERTAIN if use_gitignore else GitignoreMode.INCLUDE
+    )
     errors: list[str] = []
     findings: list[Finding] = []
     root = Path(project_path)
@@ -980,10 +934,29 @@ def analyse_source_files_with_findings(
         exclude_tests=exclude_tests,
         user_patterns=user_test_paths,
     )
-    py_files, test_skip_count = _discover_py_files(
-        root, errors, use_gitignore=use_gitignore,
-        test_matcher=test_matcher,
+    # One matcher for both walks. It is loaded whatever the mode, because
+    # the rules and the environment line need to know what is ignored even
+    # when classification counts it (INCLUDE).
+    matcher = load_gitignore_matcher(errors, "source_analyser")
+    discovery_kw: dict[str, Any] = dict(
+        label="source_analyser",
+        classification_excluded_dirs=_EXCLUDED_DIRS,
+        classification_excluded_dir_suffixes=(".egg-info",),
+        operator_excludes=operator_excludes,
+        gitignore_matcher=matcher,
+        use_gitignore=matcher is not None,
     )
+    py_found = discover(
+        root, (".py",), errors, test_matcher=test_matcher, **discovery_kw,
+    )
+    nb_found = discover(root, (".ipynb",), errors, **discovery_kw)
+    test_skip_count = py_found.test_skipped
+    classify_set = set(py_found.for_classification(mode))
+    ignored_set = set(py_found.ignored)
+    # FR-278 — imports seen only in gitignored files, for the UNCERTAIN
+    # downgrade below. Collected only in that mode.
+    ignored_imports: set[str] = set()
+    ignored_findings = 0
 
     direct_all: set[str] = set()
     dynamic_literal_all: set[str] = set()
@@ -997,11 +970,31 @@ def analyse_source_files_with_findings(
     method_calls_all: dict[tuple[str, str, str], int] = {}
     unqualified_refs_all: dict[str, int] = {}
 
-    for path in py_files:
+    for path in py_found.for_rules():
         parsed = _parse_file(path, errors)
         if parsed is None:
             continue
         visitor, source_text, tree = parsed
+
+        # REQ-3c / SEC-NEW-75 — the rules see every file, gitignored and
+        # by-name-excluded ones included, so a repository cannot hide a
+        # payload from them by listing it in its own .gitignore (F23).
+        try:
+            rel = str(path.relative_to(root))
+        except ValueError:
+            rel = path.name
+        file_findings = apply_rules(rel, source_text, tree)
+        if path in ignored_set:
+            ignored_findings += sum(1 for f in file_findings if not f.suppressed)
+        findings.extend(file_findings)
+
+        if path not in classify_set:
+            if mode is GitignoreMode.UNCERTAIN and path in ignored_set:
+                ignored_imports |= visitor.direct_imports
+                ignored_imports |= visitor.dynamic_literals
+                ignored_imports |= visitor.wildcard_modules
+            continue
+
         direct_all |= visitor.direct_imports
         dynamic_literal_all |= visitor.dynamic_literals
         if visitor.has_nonliteral_dynamic:
@@ -1018,15 +1011,14 @@ def analyse_source_files_with_findings(
                 unqualified_refs_all.get(name, 0) + count
             )
 
-        # REQ-3c — rule engine on parsed AST.
-        try:
-            rel = str(path.relative_to(root))
-        except ValueError:
-            rel = path.name
-        findings.extend(apply_rules(rel, source_text, tree))
-
     # REQ-3b — also scan notebook code cells.
-    nb_visitor = _parse_notebooks(root, errors)
+    nb_visitor = _parse_notebooks(nb_found.for_classification(mode), errors)
+    if mode is GitignoreMode.UNCERTAIN:
+        nb_ignored = _parse_notebooks(nb_found.ignored, errors)
+        if nb_ignored is not None:
+            ignored_imports |= nb_ignored.direct_imports
+            ignored_imports |= nb_ignored.dynamic_literals
+            ignored_imports |= nb_ignored.wildcard_modules
     if nb_visitor is not None:
         direct_all |= nb_visitor.direct_imports
         dynamic_literal_all |= nb_visitor.dynamic_literals
@@ -1047,10 +1039,17 @@ def analyse_source_files_with_findings(
     direct_all |= wildcard_modules_all
 
     # REQ-3c — notebook magics → findings.
-    findings.extend(_collect_notebook_findings(root, errors))
+    nb_ignored_set = set(nb_found.ignored)
+    for nb_finding_path in nb_found.for_rules():
+        nb_findings = _collect_notebook_findings(root, [nb_finding_path])
+        if nb_finding_path in nb_ignored_set:
+            ignored_findings += sum(1 for f in nb_findings if not f.suppressed)
+        findings.extend(nb_findings)
 
     # REQ-3c — Dockerfile / workflow curl-pipe-shell findings.
-    findings.extend(_collect_shell_findings(root, errors))
+    findings.extend(
+        _collect_shell_findings(root, errors, operator_excludes)
+    )
 
     # Apply config-level suppressions.
     if suppression.suppress or suppression.per_path:
@@ -1203,6 +1202,32 @@ def analyse_source_files_with_findings(
                 upgraded.append(dep)
         updated = upgraded
 
+    # FR-278 — a dep still SAFE whose only evidence of use is in gitignored
+    # files is UNCERTAIN, not SAFE. The commonest such code is generated
+    # (protobuf stubs, OpenAPI clients), and removing its dep breaks the
+    # build. The reason is a fixed literal and names no file (PRV-008).
+    if ignored_imports:
+        downgraded: list[Dependency] = []
+        for dep in updated:
+            if (
+                dep.status is DependencyStatus.SAFE
+                and not dep.is_transitive
+                and not dep.is_type_stub
+                and _find_import_name(
+                    _normalise(dep.name), ignored_imports, dist_imports
+                ) is not None
+            ):
+                downgraded.append(
+                    replace(
+                        dep,
+                        status=DependencyStatus.UNCERTAIN,
+                        reason=GITIGNORED_ONLY_REASON,
+                    )
+                )
+            else:
+                downgraded.append(dep)
+        updated = downgraded
+
     # Resolve transitive dep statuses using the dependency graph.
     # REQ-19a / NEW-ARCH-006: the propagation logic now lives in
     # ``core/classifier.py:classify_canonical`` (extracted so every
@@ -1217,6 +1242,15 @@ def analyse_source_files_with_findings(
             f"{test_skip_count} test files skipped (--exclude-tests); "
             f"findings within them not scanned"
         )
+    # PRV-008 — aggregate-only lines: a fixed literal plus an integer, so
+    # no path can leak. Emitted only when nonzero.
+    if ignored_findings:
+        errors.append(gitignored_findings_line(ignored_findings))
+    unignored_envs = max(
+        py_found.environment_dirs_unignored, nb_found.environment_dirs_unignored
+    )
+    if unignored_envs:
+        errors.append(unignored_environments_line(unignored_envs))
 
     # REQ-3b — surface imports that weren't matched to any declared dep
     # as UNDECLARED entries.
@@ -1250,20 +1284,17 @@ def _classify_canonical_shim(
 _classify_canonical_legacy = _classify_canonical_shim
 
 
-def _collect_notebook_findings(root: Path, errors: list[str]) -> list[Finding]:
-    """Return REQ-3c findings for ``!pip install`` / ``%pip install`` magics."""
+def _collect_notebook_findings(
+    root: Path, notebooks: list[Path]
+) -> list[Finding]:
+    """Return REQ-3c findings for ``!pip install`` / ``%pip install`` magics
+    in ``notebooks``. Those are every notebook the rules must see,
+    gitignored ones included (SEC-NEW-75)."""
     from scarno.findings.engine import scan_notebook_magics
 
     out: list[Finding] = []
-    for nb_path in root.rglob("*.ipynb"):
-        rel_parts = nb_path.relative_to(root).parts
-        if any(part in _EXCLUDED_DIRS for part in rel_parts):
-            continue
-        try:
-            resolved = resolve_and_confine(nb_path, root)
-        except PathEscapeError:
-            continue
-        cells, _nb_errors = extract_code_cells(resolved)
+    for nb_path in notebooks:
+        cells, _nb_errors = extract_code_cells(nb_path)
         if not cells.raw_magics:
             continue
         try:
@@ -1274,8 +1305,15 @@ def _collect_notebook_findings(root: Path, errors: list[str]) -> list[Finding]:
     return out
 
 
-def _collect_shell_findings(root: Path, errors: list[str]) -> list[Finding]:
-    """Return REQ-3c findings for Dockerfile / workflow ``curl | sh`` lines."""
+def _collect_shell_findings(
+    root: Path,
+    errors: list[str],
+    operator_excludes: tuple[str, ...] = (),
+) -> list[Finding]:
+    """Return REQ-3c findings for Dockerfile / workflow ``curl | sh`` lines.
+
+    These candidates never honoured ``.gitignore``, and still don't. They
+    do honour the operator's ``--exclude`` globs (SEC-NEW-76)."""
     from scarno.findings.engine import scan_shell_script_for_curl_pipe
 
     out: list[Finding] = []
@@ -1287,6 +1325,10 @@ def _collect_shell_findings(root: Path, errors: list[str]) -> list[Finding]:
         for pattern in ("*.yml", "*.yaml"):
             candidates.extend(gh_workflows.glob(pattern))
     for path in candidates:
+        if operator_excludes and is_operator_excluded(
+            path.relative_to(root).as_posix(), operator_excludes
+        ):
+            continue
         # SEC-002 — the candidate came from a glob over the analysed tree,
         # but a name matched there may be a symlink pointing anywhere. Read
         # the confined, symlink-resolved path so the check and the open

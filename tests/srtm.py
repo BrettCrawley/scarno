@@ -116,6 +116,7 @@ SECURITY_REQUIREMENTS: frozenset[str] = frozenset(
         "SEC-NEW-72",  # --allow-remote-fetch is argv-only (mirrors SEC-NEW-56)
         "SEC-NEW-73",  # Decompression-bomb caps when reading fetched JARs
         "SEC-NEW-74",  # --integrity-cross-check retries once after jittered backoff before declaring mismatch
+        "SEC-NEW-75",  # security rules never honour .gitignore or by-name exclusions; installed environments pruned by structure (F23)
         "SEC-NEW-76",  # operator --exclude globs: argv only, validated like --test-paths, applied to every set incl. rules
     }
 )
@@ -170,6 +171,7 @@ PRIVACY_REQUIREMENTS: frozenset[str] = frozenset(
         "PRV-005",  # Off-machine disclosure: minimisation gate superseded by mandatory pre-fetch disclosure + LIMITATIONS.md (REQ-24 Option 2)
         "PRV-006",  # Disclosure line names IP exposure explicitly
         "PRV-007",  # Operator-facing docs explain project-fingerprinting risk (PT-005)
+        "PRV-008",  # gitignore / environment audit lines and the UNCERTAIN reason are fixed literals plus counts, no paths
     }
 )
 

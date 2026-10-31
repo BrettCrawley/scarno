@@ -110,6 +110,11 @@ class DiscoveredFiles:
     rule_only: list[Path] = field(default_factory=list)
     #: Installed-environment directories pruned (aggregate only: PRV-004).
     environment_dirs_skipped: int = 0
+    #: Of those, how many the tree's own .gitignore does not cover. A
+    #: gitignored virtualenv is the normal case. One that is not is either
+    #: committed or relies on the operator's global excludes, and either
+    #: way is worth surfacing: it is also what a planted marker looks like.
+    environment_dirs_unignored: int = 0
     #: Files and directories removed by operator ``--exclude`` globs.
     operator_excluded: int = 0
     #: Files skipped by the ``--exclude-tests`` matcher.
@@ -158,6 +163,20 @@ def load_gitignore_matcher(
 
 def _matches_any(rel: str, patterns: tuple[str, ...]) -> bool:
     return any(fnmatch.fnmatchcase(rel, p) for p in patterns)
+
+
+def is_operator_excluded(rel: str, patterns: tuple[str, ...]) -> bool:
+    """True when an operator ``--exclude`` glob matches the root-relative
+    POSIX path ``rel``, or the path of any directory above it. For callers
+    that find candidates without :func:`discover` (Dockerfile and workflow
+    scans)."""
+    if not patterns:
+        return False
+    parts = rel.split("/")
+    return any(
+        _matches_any("/".join(parts[:i]), patterns)
+        for i in range(1, len(parts) + 1)
+    )
 
 
 def _has_environment_marker(filenames: Iterable[str]) -> bool:
@@ -218,6 +237,11 @@ def discover(
     def _on_error(exc: OSError) -> None:
         errors.append(f"{label}: tree walk failed — {exc}")
 
+    def _count_environment(path: Path) -> None:
+        out.environment_dirs_skipped += 1
+        if matcher is None or not matcher(str(path)):
+            out.environment_dirs_unignored += 1
+
     for dirpath, dirnames, filenames in os.walk(
         root, onerror=_on_error, followlinks=False
     ):
@@ -237,7 +261,7 @@ def discover(
                 out.operator_excluded += 1
                 continue
             if d in ENVIRONMENT_DIR_NAMES:
-                out.environment_dirs_skipped += 1
+                _count_environment(here / d)
                 continue
             keep.append(d)
         dirnames[:] = keep
@@ -246,7 +270,7 @@ def discover(
         # descending. The root itself is never treated as an environment:
         # analysing a virtualenv directly is the operator's explicit choice.
         if rel_dir_parts and _has_environment_marker(filenames):
-            out.environment_dirs_skipped += 1
+            _count_environment(here)
             dirnames[:] = []
             continue
 
