@@ -4,7 +4,7 @@ All notable changes to **scarno** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] — 2026-10-31
 
 ### Added
 - **`--sarif-path-prefix` and correct Code Scanning paths for a subdirectory.**
@@ -24,7 +24,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   repository root, unchanged so existing alerts keep their history, and
   `scarno/<path>` for a subdirectory (FR-282).
 
+### Changed
+- **Python: gitignored code now counts as evidence, with a caveat.** A
+  dependency whose only use is in gitignored files (generated code such as
+  protobuf `_pb2.py` stubs, OpenAPI clients) is now **UNCERTAIN** with the
+  reason "used only in files excluded by .gitignore", instead of SAFE. Telling
+  you to remove it broke the build the moment the code was regenerated.
+  Notebooks follow the same rule; they previously ignored `.gitignore`
+  entirely. `--no-gitignore` keeps its meaning: gitignored files count like
+  any other. Other ecosystems follow in later releases.
+- **Python: expect new findings on upgrade.** The security rules now read
+  gitignored files and directories excluded from classification by name
+  (`build/`, `dist/`, `.tox`, `venv`), see Security below. Installed
+  environments (any directory with `pyvenv.cfg`, `site-packages`,
+  `dist-packages`, `__pypackages__`, `node_modules`) are still not scanned.
+  Two new warning lines report how many findings came from gitignored files,
+  and how many installed environments the tree's own `.gitignore` does not
+  cover. Both carry counts only, no paths.
+
 ### Security
+- **A pull request could hide a payload from the security rules by
+  gitignoring it.** Python discovery honoured the analysed repository's own
+  `.gitignore` for the rules as well as for classification. A pull request
+  that adds `evil.py`, lists it in `.gitignore` and commits it with
+  `git add -f` passed the `--fail-on-severity` gate unseen (Claude Security
+  F23). The rules now never honour `.gitignore`. JavaScript, Java, Go, C# and
+  CSS discovery did not filter on `.gitignore` to begin with, so they were not
+  affected.
 - **Analysing an untrusted Maven repository could execute code from it.** Maven
   reads its launcher configuration from the directory it starts in — a
   `-javaagent:` in `.mvn/jvm.config` is folded into the JVM command line and runs
@@ -242,6 +268,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Path-confined, sandboxed file access; adversarial security test suite.
 - Optional OS-trust-store TLS via `--native-tls`.
 
+[1.1.0]: https://github.com/BrettCrawley/scarno/compare/v1.0.4...v1.1.0
 [1.0.4]: https://github.com/BrettCrawley/scarno/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/BrettCrawley/scarno/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/BrettCrawley/scarno/compare/v1.0.1...v1.0.2

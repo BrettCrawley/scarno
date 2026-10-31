@@ -1,4 +1,4 @@
-![Scarno - Cut the dead wood before it catches fire](https://raw.githubusercontent.com/BrettCrawley/scarno/v1.0.4/branding/scarno-logo.png)
+![Scarno - Cut the dead wood before it catches fire](https://raw.githubusercontent.com/BrettCrawley/scarno/v1.1.0/branding/scarno-logo.png)
 
 # Scarno
 
@@ -537,7 +537,7 @@ Scanning, posts a sticky PR comment, writes a job summary, and emits inline
 annotations.
 
 ```yaml
-- uses: brettcrawley/scarno@v1.0.4
+- uses: brettcrawley/scarno@v1.1.0
   with:
     path: .
     format: sarif
@@ -577,7 +577,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: brettcrawley/scarno@v1.0.4
+      - uses: brettcrawley/scarno@v1.1.0
         with:
           fail-on-severity: HIGH
 ```
