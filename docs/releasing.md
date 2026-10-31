@@ -255,6 +255,14 @@ The full acceptance list is [`slsa.md`](slsa.md) §4.
 - **The whole run fails immediately with "This run likely failed because of a
   workflow file issue"** and no job logs. The `provenance` job's declared
   permissions no longer satisfy the generator — see [`slsa.md`](slsa.md) §3.
+- **`publish` fails with "InvalidDistribution: … is not a valid metadata
+  version".** The build backend is unpinned, so a new `hatchling` can emit a
+  newer core-metadata version than the twine bundled inside the pinned
+  `pypa/gh-action-pypi-publish` understands. The local `twine check` in §3 does
+  not catch it, because it installs the latest twine. Nothing is uploaded:
+  bump the action pin to a release whose `requirements/runtime.txt` carries a
+  new enough twine (1.1.0 needed v1.14.2+ for metadata 2.5), then delete and
+  re-create the tag as for a wrong tag.
 - **Tag/version mismatch.** The `build` job fails before anything is uploaded.
   Delete the tag, fix `pyproject.toml`, commit, re-tag.
 - **Empty release notes.** The `release` job fails if `CHANGELOG.md` has no

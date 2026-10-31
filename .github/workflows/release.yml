@@ -155,7 +155,7 @@ jobs:
         # The trusted-publisher entry on PyPI matches on owner, repository,
         # workflow filename, and environment — not on which action uploads — so
         # this needs no PyPI-side change.
-        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
 
   release:
     name: github release
