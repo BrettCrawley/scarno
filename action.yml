@@ -53,6 +53,14 @@ inputs:
       ``::notice`` workflow commands.
     required: false
     default: "true"
+  category:
+    description: >-
+      Code Scanning category for the SARIF upload. Each category keeps its
+      own set of alerts, so two jobs analysing different directories must
+      not share one. Defaults to ``scarno`` when ``path`` is the
+      repository root, and ``scarno/<path>`` for a subdirectory.
+    required: false
+    default: ""
   scarno-version:
     description: Scarno PyPI version to install.
     required: false
@@ -111,6 +119,60 @@ runs:
         fi
         scarno --help > /dev/null
 
+    - name: Resolve the analysed directory within the repository
+      # Code Scanning and workflow-command annotations both read a file
+      # path as relative to the repository root, and scarno reports paths
+      # relative to the analysed directory. For ``path: services/api`` a
+      # finding in services/api/app.py would otherwise be reported as
+      # app.py and land on the wrong file, or none. The root is
+      # github.workspace, the same default upload-sarif's checkout_path
+      # uses to relativise paths.
+      id: scope
+      shell: bash
+      env:
+        TS_PATH: ${{ inputs.path }}
+        TS_CATEGORY: ${{ inputs.category }}
+        TS_WORKSPACE: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+        TS_TARGET="$(cd "${TS_PATH}" && pwd -P)"
+        TS_ROOT="$(cd "${TS_WORKSPACE}" && pwd -P)"
+        PREFIX=""
+        if [[ "${TS_TARGET}" == "${TS_ROOT}" ]]; then
+          PREFIX=""
+        elif [[ "${TS_TARGET}" == "${TS_ROOT}/"* ]]; then
+          PREFIX="${TS_TARGET#"${TS_ROOT}/"}"
+        else
+          echo "::warning title=Scarno::The analysed path is outside github.workspace, so Code Scanning cannot map its alerts to repository files."
+        fi
+        if [[ "${PREFIX}" == *$'\n'* || "${PREFIX}" == *$'\r'* ]]; then
+          echo "::warning title=Scarno::The analysed path contains a line break; file paths in the report are left relative to it."
+          PREFIX=""
+        fi
+        if [[ -n "${TS_CATEGORY}" ]]; then
+          CATEGORY="${TS_CATEGORY}"
+        elif [[ -z "${PREFIX}" ]]; then
+          # Unchanged from earlier releases, so existing alerts keep
+          # their history.
+          CATEGORY="scarno"
+        else
+          CATEGORY="scarno/${PREFIX}"
+        fi
+        # --sarif-path-prefix arrived after 1.0.4. A pinned older
+        # scarno-version would exit 2 on it, so detect support. Help is
+        # captured first: grep -q exiting early under pipefail would
+        # otherwise read as "unsupported".
+        SUPPORTED=false
+        if HELP="$(scarno --help 2>/dev/null)" \
+            && grep -q -- "--sarif-path-prefix" <<<"${HELP}"; then
+          SUPPORTED=true
+        fi
+        {
+          echo "prefix=${PREFIX}"
+          echo "category=${CATEGORY}"
+          echo "prefix-supported=${SUPPORTED}"
+        } >> "${GITHUB_OUTPUT}"
+
     - name: Run Scarno (primary report)
       id: run
       shell: bash
@@ -120,11 +182,22 @@ runs:
         TS_OUTPUT: ${{ inputs.output-file }}
         TS_SEVERITY: ${{ inputs.fail-on-severity }}
         TS_SHOW_SUPPRESSED: ${{ inputs.show-suppressed }}
+        TS_PREFIX: ${{ steps.scope.outputs.prefix }}
+        TS_PREFIX_SUPPORTED: ${{ steps.scope.outputs.prefix-supported }}
       run: |
         set +e
         FLAGS=()
         if [[ "${TS_SHOW_SUPPRESSED}" == "true" ]]; then
           FLAGS+=(--show-suppressed)
+        fi
+        # Only for a subdirectory: at the root there is nothing to add,
+        # and older scarno versions keep working unchanged.
+        if [[ "${TS_FORMAT}" == "sarif" && -n "${TS_PREFIX}" ]]; then
+          if [[ "${TS_PREFIX_SUPPORTED}" == "true" ]]; then
+            FLAGS+=(--sarif-path-prefix "${TS_PREFIX}")
+          else
+            echo "::warning title=Scarno::This scarno version has no --sarif-path-prefix, so Code Scanning alerts for a subdirectory will point at the wrong files. Use scarno-version latest or a release that has it."
+          fi
         fi
         scarno "${TS_PATH}" \
           --format "${TS_FORMAT}" \
@@ -157,6 +230,7 @@ runs:
       env:
         TS_PATH: ${{ inputs.path }}
         TS_ANNOTATE: ${{ inputs.annotate }}
+        TS_PREFIX: ${{ steps.scope.outputs.prefix }}
       run: |
         set -euo pipefail
         # The JSON report that drives this action's outputs is written to,
@@ -262,9 +336,18 @@ runs:
                 "MEDIUM": "warning",
                 "LOW": "notice",
             }
+            # Annotation paths are repository-relative, like SARIF ones.
+            prefix = os.environ.get("TS_PREFIX", "")
+
+            def _repo_path(path):
+                path = str(path or "")
+                if prefix and path and not path.startswith("/"):
+                    return f"{prefix}/{path}"
+                return path
+
             for f in findings:
                 cmd = sev_to_cmd.get(f.get("severity", "LOW"), "warning")
-                file_ = _esc_prop(f.get("file_path", ""))
+                file_ = _esc_prop(_repo_path(f.get("file_path", "")))
                 line = _esc_prop(f.get("line", 1))
                 rule_id = _esc_prop(f.get("rule_id", "TS-UNKNOWN"))
                 msg = _esc_data(f.get("message", ""))
@@ -276,7 +359,7 @@ runs:
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: ${{ inputs.output-file }}
-        category: scarno
+        category: ${{ steps.scope.outputs.category }}
 
     - name: Post sticky PR comment
       if: ${{ inputs.comment-on-pr == 'true' && github.event_name == 'pull_request' }}

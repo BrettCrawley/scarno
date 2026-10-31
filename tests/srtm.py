@@ -406,6 +406,8 @@ FUNCTIONAL_REQUIREMENTS: frozenset[str] = frozenset(
         "FR-279",  # shared discovery: tracked / ignored / rule-only sets, structural environment pruning, confinement
         # SARIF accepted by GitHub Code Scanning
         "FR-280",  # SARIF validates against the 2.1.0 schema and every result has a physicalLocation
+        "FR-281",  # --sarif-path-prefix makes SARIF / annotation paths repository-relative; the action derives it from `path`
+        "FR-282",  # action Code Scanning category: `scarno` at the root, `scarno/<dir>` for a subdirectory, `category` input overrides
         # COMP-005 — REQ-24 GDPR compliance touchpoint (consent gate + disclosure)
         "COMP-005",  # GDPR — operator IP disclosure to index hosts; consent via --allow-remote-fetch + PUC-006/008
     }

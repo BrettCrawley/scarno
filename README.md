@@ -192,6 +192,7 @@ recognised manifest file.
 | `--fail-on-remote-severity` | flag | off | **REQ-24** — let `provenance="remote"` findings escalate exit code `3` via `--fail-on-severity`. Off by default: remote findings are visible (with a top-of-report banner) but advisory, because the bytes the analyser saw were network-fetched and may be attacker-influenceable. Requires `--allow-remote-fetch`. |
 | `--no-gitignore` | flag | off | Disable `.gitignore` filtering during source-file discovery (analyse ignored files too). |
 | `--show-suppressed` | flag | off | Include suppressed findings in the report, marked `suppressed=true`. |
+| `--sarif-path-prefix` | path | — | **SARIF only.** The analysed directory's path relative to the repository root, prepended to every file path in the report. GitHub Code Scanning reads SARIF paths as relative to the repository root, so set this when analysing a subdirectory and uploading the report yourself: `scarno services/api --format sarif --sarif-path-prefix services/api`. Relative paths only; no `..` segments. The GitHub Action sets it for you. |
 | `--fail-on-suppressed-severity` | flag | off | Let **suppressed** findings escalate exit code `3` via `--fail-on-severity`. Off by default, because suppression is how you silence a finding in your *own* repository. Turn it on when scanning a tree you do not control — both suppression routes are files in that tree, so whoever wrote the code also chose what the gate ignores. |
 | `--verbose` | flag | off | Emit debug lines to stderr. Suppressed in non-text formats so piped output stays clean. |
 | `--help` | flag | — | Show built-in help and exit. |
@@ -547,12 +548,13 @@ annotations.
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `path` | `.` | Directory to analyse, relative to repo root. |
+| `path` | `.` | Directory to analyse, relative to repo root. For a subdirectory, the action makes report and annotation paths repository-relative so Code Scanning alerts land on the right files. |
 | `format` | `sarif` | Primary report format. |
 | `output-file` | `scarno.sarif` | Where the primary report is written. |
 | `fail-on-severity` | `HIGH` | Severity threshold for exit code `3`. |
 | `show-suppressed` | `false` | Include suppressed findings. |
 | `upload-sarif` | `true` | Upload via `github/codeql-action/upload-sarif` (needs `security-events: write`). |
+| `category` | `scarno`, or `scarno/<path>` for a subdirectory | Code Scanning category for the upload. Each category keeps its own alerts, so jobs analysing different directories need different categories. The default already gives each directory its own. |
 | `comment-on-pr` | `true` | Post a sticky Markdown comment on PRs (needs `pull-requests: write`). |
 | `job-summary` | `true` | Write the Markdown report to `$GITHUB_STEP_SUMMARY`. |
 | `annotate` | `true` | Emit per-finding `::error` / `::warning` / `::notice` annotations. |

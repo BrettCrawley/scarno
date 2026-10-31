@@ -62,7 +62,10 @@ from scarno.models import (
 )
 from scarno.reporters.json_reporter import JsonReporter
 from scarno.reporters.markdown_reporter import MarkdownReporter
-from scarno.reporters.sarif_reporter import SarifReporter
+from scarno.reporters.sarif_reporter import (
+    SarifReporter,
+    sanitise_sarif_path_prefix,
+)
 from scarno.reporters.text_reporter import TextReporter
 from scarno.security import (
     PathEscapeError,
@@ -147,6 +150,9 @@ class _RunOptions:
     private_index_hosts: tuple[str, ...] = ()
     # REQ-24 — argv-only --native-tls (truststore-backed SSL context).
     native_tls: bool = False
+    # FR-281 — repository-relative path of the analysed directory, prepended
+    # to SARIF artifact URIs (already sanitised). "" = repository root.
+    sarif_path_prefix: str = ""
 
 
 def _echo_err(message: str) -> None:
@@ -307,7 +313,7 @@ def _merge_results(
     )
 
 
-def _render(result: AnalysisResult, fmt: str) -> str:
+def _render(result: AnalysisResult, fmt: str, *, sarif_path_prefix: str = "") -> str:
     if fmt == "json":
         return JsonReporter().render(result)
     if fmt == "text":
@@ -315,7 +321,7 @@ def _render(result: AnalysisResult, fmt: str) -> str:
     if fmt in ("markdown", "md"):
         return MarkdownReporter().render(result)
     if fmt == "sarif":
-        return SarifReporter().render(result)
+        return SarifReporter(path_prefix=sarif_path_prefix).render(result)
     raise _CliError(
         f"Unknown --format value: {fmt!r} "
         f"(expected one of: text, json, markdown, sarif)"
@@ -763,7 +769,9 @@ def _run(opts: _RunOptions) -> int:
     visible_result = _apply_show_suppressed(merged, opts.show_suppressed)
     result = merged
 
-    rendered = _render(visible_result, opts.format)
+    rendered = _render(
+        visible_result, opts.format, sarif_path_prefix=opts.sarif_path_prefix
+    )
 
     # Resolve the effective output target. When --output is omitted AND
     # --format is markdown (the new default), auto-derive a path of the
@@ -964,6 +972,18 @@ def main(
             "bytes; no '..' segments; POSIX '/' only."
         ),
         hidden=True,
+    ),
+    sarif_path_prefix: str | None = typer.Option(
+        None,
+        "--sarif-path-prefix",
+        help=(
+            "SARIF only. The analysed directory's path relative to the "
+            "repository root, prepended to every file path in the report. "
+            "GitHub Code Scanning reads SARIF paths as relative to the "
+            "repository root, so set this when analysing a subdirectory "
+            "(e.g. --sarif-path-prefix services/api). Relative, '/' or '\\' "
+            "separators, no '..' segments."
+        ),
     ),
     language: list[str] | None = typer.Option(
         None,
@@ -1166,6 +1186,22 @@ def main(
         _echo_err(sanitise(str(exc)))
         raise typer.Exit(code=2)
 
+    # FR-281 — the prefix only means something in a SARIF report. Accepting
+    # it silently with another format would hide a misconfigured workflow.
+    path_prefix = ""
+    if sarif_path_prefix is not None:
+        if fmt != "sarif":
+            _echo_err(
+                "--sarif-path-prefix only applies to --format sarif "
+                f"(got --format {sanitise(fmt)})"
+            )
+            raise typer.Exit(code=2)
+        try:
+            path_prefix = sanitise_sarif_path_prefix(sarif_path_prefix)
+        except ValueError as exc:
+            _echo_err(sanitise(str(exc)))
+            raise typer.Exit(code=2)
+
     # REQ-24 — cross-flag validation. Each REQ-24 capability composes
     # onto the previous one; setting an outer flag without the inner
     # is a usage error, not a silent no-op.
@@ -1230,6 +1266,7 @@ def main(
         private_index_hosts=tuple(allow_private_index_host or ()),
         # REQ-24 — OS-native trust store for outbound TLS. Argv-only.
         native_tls=native_tls,
+        sarif_path_prefix=path_prefix,
     )
     try:
         exit_code = _run(opts)

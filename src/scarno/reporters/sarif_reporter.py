@@ -65,10 +65,51 @@ from scarno.security import sanitise
 _SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
 _SARIF_VERSION = "2.1.0"
 _INFORMATION_URI = "https://github.com/BrettCrawley/scarno"
-# RFC 3986 characters left unencoded in a path: unreserved, sub-delims,
-# ":" and "@" (pchar), plus "/" as the segment separator.
-_URI_PATH_SAFE = "/:@!$&'()*+,;=-._~"
+# RFC 3986 characters left unencoded in a relative path: unreserved,
+# sub-delims, "@" and "/". ":" is encoded, because in the first segment of
+# a relative reference it would read as a URI scheme ("a:b.py").
+_URI_PATH_SAFE = "/@!$&'()*+,;=-._~"
+# Absolute file: URIs keep ":" so a Windows drive reads "D:".
+_FILE_URI_SAFE = _URI_PATH_SAFE + ":"
+_PATH_PREFIX_MAX_BYTES = 1024
 
+
+def sanitise_sarif_path_prefix(raw: str) -> str:
+    """Validate and normalise a ``--sarif-path-prefix`` value (FR-281).
+
+    GitHub Code Scanning reads a relative SARIF URI as relative to the
+    repository root. When the analysed directory is a subdirectory, its
+    repository-relative path is prepended to every relative URI so the
+    alerts land on the right files.
+
+    Returns the prefix with forward slashes and no leading ``./`` or
+    trailing ``/``. ``"."`` and ``""`` normalise to ``""`` (no prefix).
+    Raises ``ValueError`` for anything that is not a plain relative
+    path: absolute paths, drive letters, ``..`` segments, control
+    characters, or more than 1024 bytes.
+    """
+    if len(raw.encode("utf-8", "surrogatepass")) > _PATH_PREFIX_MAX_BYTES:
+        raise ValueError(
+            f"--sarif-path-prefix is longer than {_PATH_PREFIX_MAX_BYTES} bytes"
+        )
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in raw):
+        raise ValueError("--sarif-path-prefix must not contain control characters")
+    value = raw.replace("\\", "/")
+    if value.startswith("/") or PureWindowsPath(raw).drive:
+        raise ValueError(
+            "--sarif-path-prefix must be relative to the repository root "
+            f"(got an absolute path: {sanitise(raw)!r})"
+        )
+    segments = [s for s in value.split("/") if s not in ("", ".")]
+    if ".." in segments:
+        raise ValueError("--sarif-path-prefix must not contain '..' segments")
+    return "/".join(segments)
+
+
+def _is_relative_uri(uri: str) -> bool:
+    """True for a relative-path reference, False for ``file:``, ``//host``
+    and ``/abs`` forms, which GitHub resolves on its own."""
+    return bool(uri) and not uri.startswith("/") and ":" not in uri.split("/", 1)[0]
 
 # SARIF level mapping. SARIF defines four: "error", "warning", "note", "none".
 _SEVERITY_TO_LEVEL: dict[FindingSeverity, str] = {
@@ -199,7 +240,7 @@ def _directory_uri(path: str) -> str:
         posix = cleaned
     else:
         return _uri(cleaned.rstrip("/\\") + "/")
-    return "file://" + quote(posix.rstrip("/") + "/", safe=_URI_PATH_SAFE)
+    return "file://" + quote(posix.rstrip("/") + "/", safe=_FILE_URI_SAFE)
 
 
 def _dep_file(dep: Dependency) -> str | None:
@@ -395,7 +436,26 @@ def _dep_to_result(
 
 
 class SarifReporter:
-    """Render an :class:`AnalysisResult` as a SARIF 2.1.0 JSON string."""
+    """Render an :class:`AnalysisResult` as a SARIF 2.1.0 JSON string.
+
+    *path_prefix* (FR-281) is the analysed directory's path relative to
+    the repository root, already validated by
+    :func:`sanitise_sarif_path_prefix`. It is prepended to every relative
+    artifact URI. Empty means the analysed directory is the root.
+    """
+
+    def __init__(self, path_prefix: str = "") -> None:
+        self._prefix = sanitise_sarif_path_prefix(path_prefix)
+
+    def _apply_prefix(self, results: list[dict[str, Any]]) -> None:
+        if not self._prefix:
+            return
+        encoded = _uri(self._prefix)
+        for res in results:
+            for loc in res.get("locations") or []:
+                artifact = loc.get("physicalLocation", {}).get("artifactLocation")
+                if artifact and _is_relative_uri(artifact.get("uri", "")):
+                    artifact["uri"] = f"{encoded}/{artifact['uri']}"
 
     def render(self, result: AnalysisResult) -> str:
         # Rule descriptors — every REQ-3c rule plus the four dep rules,
@@ -523,6 +583,7 @@ class SarifReporter:
         located = [r for r in results if r.get("locations")]
         without_location = len(results) - len(located)
         results = located
+        self._apply_prefix(results)
 
         run: dict[str, Any] = {
             "tool": {
@@ -547,6 +608,9 @@ class SarifReporter:
                 "projectPath": _clean(result.project_path),
                 "errorCount": len(result.errors),
                 "resultsWithoutLocation": without_location,
+                # FR-281 — the repository-relative prefix applied to
+                # artifact URIs ("" when the analysed dir is the root).
+                "pathPrefix": self._prefix,
                 # REQ-9 — every ecosystem scanned in this run.
                 "languages": [_clean(lang) for lang in result.languages],
                 # REQ-24 / FR-266 — structured banner data on the run

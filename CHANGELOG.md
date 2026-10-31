@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`--sarif-path-prefix` and correct Code Scanning paths for a subdirectory.**
+  GitHub reads a relative SARIF path as relative to the repository root, and
+  scarno reported paths relative to the analysed directory. With the action's
+  `path: services/api`, a finding in `services/api/app.py` was uploaded as
+  `app.py` and landed on the wrong file, or on none. `--sarif-path-prefix`
+  prepends the directory's repository-relative path to every file path in a
+  SARIF report (FR-281). The action derives it from `path` relative to
+  `github.workspace` (the root `upload-sarif` uses too) and applies the same
+  prefix to its `::error` / `::warning` annotations. At the repository root it
+  passes nothing, and with a pinned `scarno-version` that predates the option
+  it warns instead of failing.
+- **Action `category` input.** Each Code Scanning category keeps its own alert
+  set, so two jobs analysing different directories under the fixed `scarno`
+  category replaced each other's alerts. The default is now `scarno` at the
+  repository root, unchanged so existing alerts keep their history, and
+  `scarno/<path>` for a subdirectory (FR-282).
+
 ### Security
 - **Analysing an untrusted Maven repository could execute code from it.** Maven
   reads its launcher configuration from the directory it starts in — a
