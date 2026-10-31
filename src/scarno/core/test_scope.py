@@ -94,8 +94,13 @@ MAX_USER_TEST_PATTERNS: Final[int] = 64
 MAX_USER_TEST_PATTERN_BYTES: Final[int] = 256
 
 
-def sanitise_test_paths(raw: tuple[str, ...]) -> tuple[str, ...]:
+def sanitise_test_paths(
+    raw: tuple[str, ...], *, flag: str = "--test-paths"
+) -> tuple[str, ...]:
     """Validate operator-supplied ``--test-paths`` globs.
+
+    ``flag`` names the option in error messages, so ``--exclude`` (which
+    shares this contract, SEC-NEW-76) reports its own name.
 
     Raises:
       ValueError: when the input violates SEC-NEW-31 / SEC-NEW-33.
@@ -108,24 +113,24 @@ def sanitise_test_paths(raw: tuple[str, ...]) -> tuple[str, ...]:
     """
     if len(raw) > MAX_USER_TEST_PATTERNS:
         raise ValueError(
-            f"--test-paths too many: {len(raw)} > "
+            f"{flag} too many: {len(raw)} > "
             f"{MAX_USER_TEST_PATTERNS} max patterns"
         )
     cleaned: list[str] = []
     for pattern in raw:
         if not isinstance(pattern, str):
             raise ValueError(
-                "--test-paths pattern must be a string"
+                f"{flag} pattern must be a string"
             )
         if len(pattern.encode("utf-8")) > MAX_USER_TEST_PATTERN_BYTES:
             raise ValueError(
-                f"--test-paths pattern too long: "
+                f"{flag} pattern too long: "
                 f"{len(pattern.encode('utf-8'))} bytes > "
                 f"{MAX_USER_TEST_PATTERN_BYTES} max"
             )
         if "\\" in pattern:
             raise ValueError(
-                "--test-paths patterns must use POSIX `/` separators "
+                f"{flag} patterns must use POSIX `/` separators "
                 "(backslash is not permitted)"
             )
         # Strip a single leading '/' (the CLI layer logs a verbose-mode warning).
@@ -136,7 +141,7 @@ def sanitise_test_paths(raw: tuple[str, ...]) -> tuple[str, ...]:
         segments = normalised.split("/")
         if any(seg == ".." for seg in segments):
             raise ValueError(
-                "--test-paths patterns must stay inside the project root "
+                f"{flag} patterns must stay inside the project root "
                 "(no '..' segments)"
             )
         if normalised:

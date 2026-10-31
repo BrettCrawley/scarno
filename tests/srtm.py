@@ -116,6 +116,7 @@ SECURITY_REQUIREMENTS: frozenset[str] = frozenset(
         "SEC-NEW-72",  # --allow-remote-fetch is argv-only (mirrors SEC-NEW-56)
         "SEC-NEW-73",  # Decompression-bomb caps when reading fetched JARs
         "SEC-NEW-74",  # --integrity-cross-check retries once after jittered backoff before declaring mismatch
+        "SEC-NEW-76",  # operator --exclude globs: argv only, validated like --test-paths, applied to every set incl. rules
     }
 )
 
@@ -398,6 +399,9 @@ FUNCTIONAL_REQUIREMENTS: frozenset[str] = frozenset(
         "FR-275",  # javap extraction runs at -package: public + protected + package-private
         "FR-276",  # parser covers every access level, constructors, and throws clauses
         "FR-277",  # method return type is recorded and compared; a return-type-only change is CHANGED
+        # gitignore-consistent-discovery plan
+        "FR-278",  # --gitignore classification mode: uncertain (default) / include / exclude; --no-gitignore = include
+        "FR-279",  # shared discovery: tracked / ignored / rule-only sets, structural environment pruning, confinement
         # COMP-005 — REQ-24 GDPR compliance touchpoint (consent gate + disclosure)
         "COMP-005",  # GDPR — operator IP disclosure to index hosts; consent via --allow-remote-fetch + PUC-006/008
     }

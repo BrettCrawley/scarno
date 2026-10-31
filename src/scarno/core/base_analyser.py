@@ -17,14 +17,35 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from scarno.core.discovery import GitignoreMode
 from scarno.models import AnalysisResult
 
 
 class BaseAnalyser(ABC):
     """Every language analyser must subclass this."""
 
-    # Set to False via ``--no-gitignore`` CLI flag to skip .gitignore filtering.
-    use_gitignore: bool = True
+    # FR-278 — how classification treats gitignored files, set by the
+    # orchestrator from ``--gitignore`` / ``--no-gitignore`` (argv only).
+    # The security rules ignore it: they always scan gitignored files.
+    gitignore: GitignoreMode = GitignoreMode.UNCERTAIN
+    # SEC-NEW-76 — operator ``--exclude`` globs, already validated by
+    # ``scarno.core.discovery.sanitise_exclude_globs``. Argv only; never
+    # read from the analysed tree.
+    operator_excludes: tuple[str, ...] = ()
+
+    # Back-compat view of ``gitignore`` for callers that predate FR-278.
+    # False means "count gitignored files like any other" (INCLUDE). Kept
+    # for one release; new code reads ``gitignore``.
+    @property
+    def use_gitignore(self) -> bool:
+        return self.gitignore is not GitignoreMode.INCLUDE
+
+    @use_gitignore.setter
+    def use_gitignore(self, value: bool) -> None:
+        if not value:
+            self.gitignore = GitignoreMode.INCLUDE
+        elif self.gitignore is GitignoreMode.INCLUDE:
+            self.gitignore = GitignoreMode.UNCERTAIN
     # REQ-17 — set by orchestrator from --exclude-tests flag.
     exclude_tests: bool = False
     # REQ-17 — operator-supplied glob list (already validated by

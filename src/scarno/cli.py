@@ -47,6 +47,7 @@ from scarno.analysers.javascript import JavascriptAnalyser  # noqa: F401
 from scarno.analysers.python import PythonAnalyser  # noqa: F401
 from scarno.core import detector, registry
 from scarno.core.base_analyser import BaseAnalyser
+from scarno.core.discovery import GitignoreMode, sanitise_exclude_globs
 from scarno.core.test_scope import sanitise_test_paths
 from scarno.models import (
     CANONICAL_ECOSYSTEMS,
@@ -108,8 +109,10 @@ class _RunOptions:
     # language.  Values are canonical ecosystem strings (``"pypi"`` / ``"npm"``
     # / etc.), validated against ``CANONICAL_ECOSYSTEMS`` at parse time.
     language_filter: tuple[str, ...] = ()
-    # REQ-3 — when False, skip .gitignore filtering during source discovery.
-    use_gitignore: bool = True
+    # FR-278 — how classification treats gitignored files. argv only.
+    gitignore: GitignoreMode = GitignoreMode.UNCERTAIN
+    # SEC-NEW-76 — operator --exclude globs (already sanitised). argv only.
+    operator_excludes: tuple[str, ...] = ()
     # REQ-17 — drop test-scoped deps and skip test source files.
     exclude_tests: bool = False
     # REQ-17 — operator-supplied test-path globs (already sanitised).
@@ -674,7 +677,8 @@ def _run(opts: _RunOptions) -> int:
 
     analysers = registry.analysers_for(runnable_types)
     for a in analysers:
-        a.use_gitignore = opts.use_gitignore
+        a.gitignore = opts.gitignore
+        a.operator_excludes = opts.operator_excludes
         a.exclude_tests = opts.exclude_tests
         a.test_paths = opts.test_paths
         a.exclude_dev = opts.exclude_dev
@@ -843,7 +847,8 @@ def run_analysis(
         fail_on_severity=opts.fail_on_severity,
         show_suppressed=opts.show_suppressed,
         language_filter=opts.language_filter,
-        use_gitignore=opts.use_gitignore,
+        gitignore=opts.gitignore,
+        operator_excludes=opts.operator_excludes,
         exclude_tests=opts.exclude_tests,
         test_paths=opts.test_paths,
         exclude_dev=opts.exclude_dev,
@@ -868,7 +873,8 @@ def run_analysis(
     ]
     analysers = registry.analysers_for(runnable_types)
     for a in analysers:
-        a.use_gitignore = fresh_opts.use_gitignore
+        a.gitignore = fresh_opts.gitignore
+        a.operator_excludes = fresh_opts.operator_excludes
         a.exclude_tests = fresh_opts.exclude_tests
         a.test_paths = fresh_opts.test_paths
         a.exclude_dev = fresh_opts.exclude_dev
@@ -926,7 +932,36 @@ def main(
     no_gitignore: bool = typer.Option(
         False,
         "--no-gitignore",
-        help="Disable .gitignore filtering during source file discovery.",
+        help=(
+            "Count gitignored files like any other during dependency "
+            "classification. Same as --gitignore include."
+        ),
+    ),
+    # FR-278 / SEC-NEW-76 — hidden until the analysers honour them
+    # (docs/plans/gitignore-consistent-discovery.md, step 3). Advertising
+    # them earlier would document flags that do nothing.
+    gitignore: str | None = typer.Option(
+        None,
+        "--gitignore",
+        help=(
+            "How dependency classification treats gitignored files: "
+            "uncertain (default; a dep used only there is UNCERTAIN), "
+            "include (count them), exclude (ignore them). Security rules "
+            "always scan gitignored files."
+        ),
+        case_sensitive=False,
+        hidden=True,
+    ),
+    exclude: list[str] | None = typer.Option(
+        None,
+        "--exclude",
+        help=(
+            "Glob (relative to project root) removed from every analyser's "
+            "scan, rules included. Repeatable. A pattern matching a "
+            "directory excludes everything under it. Max 64 patterns × 256 "
+            "bytes; no '..' segments; POSIX '/' only."
+        ),
+        hidden=True,
     ),
     language: list[str] | None = typer.Option(
         None,
@@ -1098,6 +1133,37 @@ def main(
             "patterns (patterns are anchored to the project root)"
         )
 
+    # FR-278 — resolve the classification mode. --no-gitignore is an alias
+    # for --gitignore include; asking for both include and another mode
+    # is a usage error, not a silent precedence rule.
+    try:
+        gitignore_mode = (
+            GitignoreMode(gitignore.lower()) if gitignore is not None
+            else GitignoreMode.UNCERTAIN
+        )
+    except ValueError:
+        _echo_err(
+            "--gitignore must be one of uncertain, include, exclude "
+            f"(got {sanitise(gitignore or '')!r})"
+        )
+        raise typer.Exit(code=2)
+    if no_gitignore:
+        if gitignore is not None and gitignore_mode is not GitignoreMode.INCLUDE:
+            _echo_err(
+                "--no-gitignore conflicts with --gitignore "
+                f"{gitignore_mode.value} (--no-gitignore means "
+                "--gitignore include)"
+            )
+            raise typer.Exit(code=2)
+        gitignore_mode = GitignoreMode.INCLUDE
+
+    # SEC-NEW-76 — sanitise --exclude exactly like --test-paths.
+    try:
+        operator_excludes = sanitise_exclude_globs(tuple(exclude or ()))
+    except ValueError as exc:
+        _echo_err(sanitise(str(exc)))
+        raise typer.Exit(code=2)
+
     # REQ-24 — cross-flag validation. Each REQ-24 capability composes
     # onto the previous one; setting an outer flag without the inner
     # is a usage error, not a silent no-op.
@@ -1141,7 +1207,8 @@ def main(
         fail_on_severity=severity,
         show_suppressed=show_suppressed,
         language_filter=language_filter,
-        use_gitignore=not no_gitignore,
+        gitignore=gitignore_mode,
+        operator_excludes=operator_excludes,
         exclude_tests=exclude_tests,
         test_paths=sanitised_paths,
         exclude_dev=exclude_dev,

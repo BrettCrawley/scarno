@@ -1,6 +1,6 @@
 # Plan: Consistent `.gitignore` handling across every analyser, and closing F23
 
-**Status:** Step 1 done (2026-10-31); steps 2–9 to do. Supersedes
+**Status:** Steps 1–2 done (2026-10-31); steps 3–9 to do. Supersedes
 workstream 4 of `roadmap-closeout.md`.
 
 ## Context
@@ -220,8 +220,9 @@ already centralises status for every ecosystem (NEW-ARCH-006).
   `"<n> finding(s) came from files the project's .gitignore excludes"`.
   The literal is fixed and only the integer varies.
 - **A second line** when installed-environment trees were skipped:
-  `"<n> installed-environment file(s) not rule-scanned"`. It tells the
-  operator why a tree is silent, without paths.
+  `"<n> installed-environment tree(s) not scanned"`. It tells the
+  operator why a tree is silent, without paths. It counts directories,
+  not files: see the step 2 notes.
 - **Findings from ignored files are ordinary findings.** They gate exit
   3 like any other. Nothing in the `Finding` model changes, so SARIF,
   JSON, Markdown and text need no reporter change beyond the existing
@@ -262,6 +263,44 @@ IDs are registered in `tests/srtm.py`:
        cases
      - no `gitignorefile` installed
    - No analyser uses the helper yet.
+   **Done (2026-10-31).** Delivered as `src/scarno/core/discovery.py`,
+   with `tests/unit/test_discovery.py` (40 tests: FR-278, FR-279,
+   SEC-NEW-76). The validator `sanitise_test_paths` gained a `flag=`
+   parameter so `--exclude` errors name `--exclude`. Decisions taken
+   while building it:
+   - **Three sets, not two.** `tracked`, `ignored` and `rule_only` (files
+     under a by-name classification exclusion). Classification never
+     reads `rule_only`, and the rules read all three.
+   - **Environments are counted by directory, not by file.** Pruning
+     is what keeps a large `node_modules` to one check, and counting its
+     files would mean walking it. The aggregate line therefore reads
+     "installed-environment tree(s)".
+   - **The whole virtualenv is pruned, not just `site-packages`.** We
+     measured the narrower alternative. Outside `site-packages`, a venv
+     holds console scripts in `bin/` (djangoproject.com's `bin/jp.py`
+     imports jmespath, which would falsely mark it IN_USE) and package
+     data in `share/` (a JupyterLab venv has 277 JS, 33 HTML and 8 CSS
+     third-party files). Narrowing would not raise the attacker's cost
+     either: a directory named `site-packages` hides as cheaply as a
+     planted `pyvenv.cfg`. The real fix for that residual is telling
+     committed files from untracked ones via `.git/index`, which stays
+     out of scope.
+   - **The root is never an environment.** Analysing a virtualenv
+     directly is the operator's explicit choice.
+   - **The `--exclude-tests` count is preserved.** Test files are
+     counted only when classification would otherwise have read them,
+     so the summary still matches Python's old gitignore-first order.
+   - **`--gitignore` and `--exclude` are parsed, validated and passed to
+     every analyser, but hidden from `--help`.** No analyser reads them
+     yet, so step 3 makes them visible along with the first analyser
+     that honours them. A test enforces this.
+     `BaseAnalyser.use_gitignore` is now a back-compat view of the mode.
+   - **For step 3:** files in `ignored` and `rule_only` now go through
+     confinement and size checks, because the rules read them. So step 3
+     can add new error lines (an oversized generated file, say) that
+     today's Python discovery never emitted. The back-compat snapshot in
+     step 3 must allow for that, or use fixtures without such files.
+
 3. **Python `.py` + notebooks (closes F23).**
    - Port `_discover_py_files` and the notebook walks onto the helper.
    - Rule pass over `tracked + ignored`. Classification per mode.
