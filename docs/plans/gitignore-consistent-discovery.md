@@ -1,7 +1,7 @@
 # Plan: Consistent `.gitignore` handling across every analyser, and closing F23
 
-**Status:** Proposed (2026-10-31). Supersedes workstream 4 of
-`roadmap-closeout.md`.
+**Status:** Step 1 done (2026-10-31); steps 2–9 to do. Supersedes
+workstream 4 of `roadmap-closeout.md`.
 
 ## Context
 
@@ -122,11 +122,17 @@ applying to classification unchanged. For the rule pass they are
 replaced by the structural check, so a committed `build/` directory is
 scanned.
 
-The rule pass gets a measurement step first (step 1) on the repo's own
-fixtures and a sample of real repos. If scanning `build`/`dist`/`target`
-proves too noisy, the fallback is to scan those directories only when
-they are *not* also gitignored. That still closes the "commit it and
-ignore it" path.
+Step 1 measured this: committed by-name-excluded trees added 9 files
+and **0 findings** across seven samples. So the structural check
+replaces the name lists for the rule pass, as designed, and the
+"only when not gitignored" fallback is not needed. If later evidence
+shows noise, `--exclude` is the operator's lever, and the fallback
+remains available.
+
+The structural check also applies to the HTML, CSS and JS
+**classification** walks. Step 1 found they scan installed
+environments today (see results), and no by-name list can keep up with
+environment naming (`.direnv/`, `env/`, `.venv-3.12/` …).
 
 `.git/` is always skipped, by both passes.
 
@@ -240,6 +246,8 @@ IDs are registered in `tests/srtm.py`:
      `build`/`dist`/`target`/`vendor`.
    - Decide the name-list question above from data. Record the numbers
      in this plan.
+
+   **Done (2026-10-31).** Results are in [Step 1 results](#step-1-results-2026-10-31).
 2. **`core/discovery.py` + `GitignoreMode` + CLI options.**
    - Add `--gitignore {uncertain,include,exclude}`, `--exclude`, and
      `--no-gitignore` as an alias of `include`.
@@ -291,6 +299,91 @@ IDs are registered in `tests/srtm.py`:
    - Mark F23 resolved in the scan resolution table
      (`roadmap-closeout.md` workstream 7).
 
+## Step 1 results (2026-10-31)
+
+**Method.** A throwaway script ran scarno's real rule functions on every
+candidate file of every analyser, and recorded three independent facts
+for each file:
+
+- `env`: inside an installed environment, by structure
+- `name`: inside the analyser's by-name skip list
+- `ign`: matched by the tree's own `.gitignore`
+
+The rule functions were Python `apply_rules`, HTML `_scan_html` and CSS
+`_scan_css`, and the skip lists were the analysers' own (imported, not
+copied). The script then compared what today's discovery scans with
+what the proposed rule pass would scan.
+
+The trees were read, never executed. Environments were built with
+`uv pip install --only-binary :all:`, so no package build or install
+scripts ran.
+
+**Samples:**
+
+| Sample | Commit | Why |
+|---|---|---|
+| scarno (this tree) | `59cf79b` | real `.venv`, gitignored `htmlcov/` |
+| `tests/fixtures/` | `59cf79b` | the suite's own projects |
+| django/djangoproject.com | `bf2d45d` | Django templates + CSS. Venv in `.direnv/`, which is gitignored but on no skip list. Gitignores compiled CSS. |
+| pallets/flask | `49943b5` | `.venv/`, *not* gitignored by the repo |
+| sphinx-doc/sphinx | `035a07c` | gitignores `env/`, the scan report's exact case |
+| twbs/bootstrap | `c2ab624` | committed `dist/` CSS and JS |
+| rubygems/rubygems.org | `5a641a1` | committed `vendor/assets`, `vendor/javascript` |
+
+**Rule-bearing files that the proposed rule pass adds** (gitignored or
+in a by-name skip dir, and not an environment):
+
+| Sample | Python | HTML | CSS | Findings added |
+|---|---|---|---|---|
+| scarno | 0 | 0 (60 `htmlcov/` already scanned) | 0 | 0 |
+| djangoproject.com | 0 | 0 | 0 | 0 |
+| flask | 0 | 0 | 0 | 0 |
+| sphinx | 0 | 0 | 0 | 0 |
+| bootstrap | 0 | 0 | 9 (`dist/css`) | 0 |
+| rubygems.org | 0 | 0 | 0 | 0 |
+| fixtures | 0 | 0 | 0 | 0 |
+
+**Installed environments: what the structural check keeps out:**
+
+| Sample | Env `.py` / HTML / CSS / JS files | Rule findings inside them |
+|---|---|---|
+| djangoproject.com (`.direnv/`) | 4059 / 303 / 122 / 237 | Python: 5 × CRITICAL `TS-CE-002` (sphinx), 1 × CRITICAL `TS-CE-001` (django). HTML: 5 × MEDIUM `TS-CE-012` (sphinx, django_recaptcha). |
+| sphinx (`env/`) | 1025 / 72 / 30 / 144 | Python: 5 × CRITICAL `TS-CE-002`. HTML: 2 × MEDIUM `TS-CE-012`. |
+| scarno (`.venv/`) | 1954 / 3 / 3 / 3 | Python: 1 |
+| flask (`.venv/`) | 597 / 1 / 1 / 1 | Python: 1 |
+
+**Conclusions:**
+
+1. **F23's rule pass adds no noise of its own.** Across seven samples,
+   gitignored non-environment code produced 0 new findings. All the
+   noise risk is in installed environments.
+2. **The structural check is necessary, not optional.** On
+   djangoproject.com, `.direnv/` is kept out of the Python rules today
+   *only* by `.gitignore`. A rule pass that just stopped honouring
+   `.gitignore` (the declined scan patch) would add 6 false CRITICAL
+   findings and force exit 3. The structural check caught every
+   environment file in every sample.
+3. **The name lists can be dropped from the rule pass.** Committed
+   by-name-excluded trees added 9 CSS files and 0 findings.
+4. **New: HTML, CSS and JS already scan environments today.** Their
+   name lists don't cover virtualenvs, so 7 of today's MEDIUM
+   `TS-CE-012` findings across two samples come from third-party
+   templates, and the JS analyser reads 237 venv files for usage. The
+   structural check fixes this in the same change.
+
+**Not measured (gaps):**
+
+- No `node_modules`. `npm` is not installed here, so the
+  `node_modules` marker is untested on real data. Step 2's unit tests
+  cover it.
+- No generated code. No builds were run (they would execute untrusted
+  project code), so the UNCERTAIN classification mode's real-world
+  effect is unmeasured. The djangoproject.com compiled-CSS case
+  (`static/css/*.css`, gitignored) did not exist in the clone.
+- No committed Python `build/`. No sample had one.
+- Seven samples is small. Conclusion 3 is "no evidence of noise", not
+  "proven quiet". `--exclude` is the lever if that changes.
+
 ## Behaviour changes users will see
 
 - **Python:**
@@ -300,11 +393,16 @@ IDs are registered in `tests/srtm.py`:
 - **Every other language:**
   - Deps used only in gitignored files go from IN_USE to UNCERTAIN.
   - `--no-gitignore` starts working there.
-- **HTML/CSS:** findings in gitignored templates and stylesheets now
-  appear, as before (they were never filtered), and are counted in the
-  new line.
+- **HTML/CSS:**
+  - Findings in gitignored templates and stylesheets keep appearing.
+    They were never filtered, and they are now counted in the new line.
+  - Findings from third-party templates inside installed environments
+    **disappear**. Step 1 found 7 such `TS-CE-012` findings across two
+    samples, all of them in other people's packages.
+- **JS/TS classification:** stops reading `.js` files that ship inside
+  Python virtualenvs. Step 1 found 237 on one sample.
 - **Rule pass:** committed `build/`, `dist/`, `target/` and `vendor/`
-  trees may be scanned, subject to step 1.
+  trees are scanned. Step 1 measured 0 added findings.
 
 Exit 1 (SAFE deps present) can only become *less* frequent, because
 SAFE becomes UNCERTAIN, never the reverse. Exit 3 can become *more*
