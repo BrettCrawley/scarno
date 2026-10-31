@@ -21,7 +21,10 @@ regex-based with anchored patterns and a strict line-length cap
 
 Safety:
   * Never shells out to ``gradle`` / ``groovy`` / ``kotlinc`` (SEC-011).
-    Subprocess invocation is tested against explicitly in
+    Running Gradle evaluates the project's build scripts, which is code
+    execution on an untrusted tree, so there is no opt-in path either
+    (GitHub issue #1). Enforced statically by
+    ``tests/security/test_no_gradle_spawn.py`` and at runtime by
     ``tests/unit/test_gradle.py::TestSecurity``.
   * All regex patterns are bounded; the worst-case scan is linear in
     file size.
@@ -30,11 +33,7 @@ Safety:
 """
 from __future__ import annotations
 
-import os
 import re
-import shutil
-import subprocess  # noqa: S404 — wrapped via safe_subprocess_run
-import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,8 +44,6 @@ from scarno.models import AnalysisResult, Dependency, DependencyStatus
 from scarno.security import MAX_FILE_BYTES, PathEscapeError, resolve_and_confine
 
 if TYPE_CHECKING:
-    from subprocess import CompletedProcess
-
     from scarno.models import DepEdge
 
 _MAX_LINE_BYTES = 64 * 1024
@@ -661,9 +658,9 @@ def _resolve_catalog_version(
 # ── REQ-19 — per-edge declared-version emission from `gradle dependencies` ──
 #
 # We never invoke the `gradle` binary ourselves (per module docstring +
-# SEC-011); when this helper runs the user has already supplied a captured
-# `gradle dependencies` text output via REQ-20's resolved-version code path
-# (or PR-2's `_invoke_gradle_safe`). PR-1 just needs the parser.
+# SEC-011, GitHub issue #1). These parsers only read text: a captured
+# `gradle dependencies` output the operator supplies, or the project's
+# `gradle.lockfile`. Nothing here spawns a process.
 
 # Tree branches in `gradle dependencies` output:
 #   +--- com.example:a:1.0
@@ -756,117 +753,6 @@ def _check_lockfile_consistency(
         f"e.g. {sample}); the lockfile may be out of sync — verify before "
         f"trusting REQ-20 resolved-version output."
     )
-
-
-# ── REQ-19a / SEC-NEW-52 — Gradle binary resolution + PATH-fallback warning ─
-
-
-def _resolve_gradle_binary() -> str | None:
-    """Locate the ``gradle`` binary, preferring ``$GRADLE_HOME``.
-
-    Mirrors :func:`scarno.analysers.java.maven._resolve_mvn_binary`'s
-    SEC-NEW-28 pattern. Env var set + binary missing → returns None
-    (does NOT fall through to PATH); env var unset → PATH fallback
-    emits a one-time verbose-mode warning per SEC-NEW-52.
-    """
-    gradle_home = os.environ.get("GRADLE_HOME")
-    if gradle_home:
-        candidate = Path(gradle_home) / "bin" / "gradle"
-        if candidate.exists():
-            try:
-                resolved = candidate.resolve()
-                resolved.relative_to(Path(gradle_home).resolve())
-            except (OSError, ValueError):
-                return None
-            return str(resolved)
-        return None
-    found = shutil.which("gradle")
-    if found is not None:
-        _warn_path_fallback_once("gradle")
-    return found
-
-
-def _warn_path_fallback_once(binary_name: str) -> None:
-    """Emit a verbose-mode stderr warning the first time a binary is
-    resolved via PATH (no env-var pin). Idempotent per process per
-    binary name.
-    """
-    seen = getattr(_warn_path_fallback_once, "_seen", None)
-    if seen is None:
-        seen = set()
-        _warn_path_fallback_once._seen = seen  # type: ignore[attr-defined]
-    if binary_name in seen:
-        return
-    seen.add(binary_name)
-    print(
-        f"[scarno] warning: {binary_name} resolved via PATH (no "
-        f"GRADLE_HOME set); the binary is unverified — set GRADLE_HOME "
-        f"to confine resolution.",
-        file=sys.stderr,
-    )
-
-
-# ── REQ-19a / SEC-NEW-55 — argv-allowlist-checked gradle invocation ─────────
-
-
-_GRADLE_ALLOWED_TOKENS: frozenset[str] = frozenset(
-    {
-        "dependencies",
-        "--configuration",
-        "--console=plain",
-        "--no-daemon",
-        "--quiet",
-    }
-)
-_GRADLE_ALLOWED_CONFIGURATIONS: frozenset[str] = frozenset(
-    {"runtimeClasspath", "default", "compileClasspath"}
-)
-
-
-def _invoke_gradle_safe(
-    argv_tail: list[str], *, timeout_s: float = 60.0
-) -> CompletedProcess[str] | None:
-    """REQ-19a / SEC-NEW-55 — argv-allowlist-checked gradle invocation.
-
-    Every token in ``argv_tail`` MUST be on the fixed allowlist. The
-    configuration name (the value after ``--configuration``) is
-    checked against ``_GRADLE_ALLOWED_CONFIGURATIONS`` before any
-    subprocess spawn — adversarial config names raise ``ValueError``.
-    """
-    # Two-pass validation: first the token allowlist, then the
-    # configuration value.
-    for tok in argv_tail:
-        if tok in _GRADLE_ALLOWED_TOKENS:
-            continue
-        if tok in _GRADLE_ALLOWED_CONFIGURATIONS:
-            continue
-        raise ValueError(
-            f"_invoke_gradle_safe: token {tok!r} is not on the SEC-NEW-55 "
-            f"argv allowlist; only fixed REQ-20 flags + a configuration "
-            f"from {sorted(_GRADLE_ALLOWED_CONFIGURATIONS)} are permitted."
-        )
-    gradle = _resolve_gradle_binary()
-    if gradle is None:
-        return None
-    binary_root = (
-        Path(os.environ["GRADLE_HOME"])
-        if os.environ.get("GRADLE_HOME")
-        else None
-    )
-    try:
-        from scarno.security import (
-            BinaryNotConfinedError,
-            safe_subprocess_run,
-        )
-        return safe_subprocess_run(
-            [gradle, *argv_tail],
-            timeout_s=timeout_s,
-            binary_root=binary_root,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return None
-    except BinaryNotConfinedError:
-        return None
 
 
 # ── REQ-20 / FR-204 — resolved-version detection (Gradle) ───────────────────

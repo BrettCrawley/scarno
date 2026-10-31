@@ -82,8 +82,8 @@ SECURITY_REQUIREMENTS: frozenset[str] = frozenset(
         "SEC-NEW-46",  # core/classifier.py centralisation; every analyser routes through it
         "SEC-NEW-47",  # Dependency __post_init__ + classifier mutex assertion (pin_override XOR manifest_redundant)
         "SEC-NEW-50",  # ThreadPoolExecutor worker cap min(8, cpu_count or 1) (partial — full at PR-4)
-        "SEC-NEW-52",  # MAVEN_HOME / GRADLE_HOME mandatory verification when set; verbose PATH-fallback warning
-        "SEC-NEW-55",  # mvn / gradle argv allowlist — REQ-20 fixed-argv contract (T-Phase9-04 closure)
+        "SEC-NEW-52",  # MAVEN_HOME mandatory verification when set; verbose PATH-fallback warning (Gradle half withdrawn, issue #1)
+        "SEC-NEW-55",  # mvn argv allowlist — REQ-20 fixed-argv contract (T-Phase9-04 closure; Gradle half withdrawn, issue #1)
         "SEC-NEW-57",  # Pin-detector registry symmetric coverage test
         "SEC-NEW-58",  # Subprocess-call-site AST scan — only safe_subprocess_run permitted
         # REQ-21 — Maven pinning detection (PR-3)

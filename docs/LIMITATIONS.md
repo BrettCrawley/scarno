@@ -67,6 +67,20 @@ For the full design rationale, see
   `~/.m2/repository` to be populated, and excludes `test`,
   `provided`, and `system`-scoped transitives by design (so the
   graph reflects the runtime closure).
+- **Gradle is analysed statically only; scarno never runs `gradle`.**
+  Running `gradle dependencies` evaluates the project's
+  `settings.gradle`, `build.gradle` and `init.gradle`, which on an
+  untrusted repository is code execution as the scanning user. Gradle
+  has no mode that avoids this (GitHub issue #1). Versions come from
+  the DSL and `libs.versions.toml`. The consequences:
+  - There is no Gradle transitive graph and no resolved-version
+    detection. Gradle deps do not appear in the "Multiple versions
+    detected" section, and the cross-version ABI diff has no resolved
+    baseline for them.
+  - `gradle.lockfile` is not read during analysis yet. The parser
+    exists in `gradle.py` but is not wired in.
+  - Versions computed in build logic (plugins, `buildSrc`, scripted
+    `resolutionStrategy`) are invisible.
 
 ## Python
 

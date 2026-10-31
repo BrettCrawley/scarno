@@ -2,8 +2,8 @@
 
 Generic primitive in security.py enforcing shell=False, mandatory
 timeout, optional binary-root confinement. Per-binary helpers
-(_invoke_mvn_safe / _invoke_gradle_safe / legacy _invoke_javap_safe)
-compose this with binary-specific resolution and argv allowlists.
+(_invoke_mvn_safe / legacy _invoke_javap_safe) compose this with
+binary-specific resolution and argv allowlists.
 """
 from __future__ import annotations
 

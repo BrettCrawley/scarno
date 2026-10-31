@@ -165,9 +165,10 @@ def sanitise(text: str) -> str:
 
 # ── REQ-19a — generic subprocess primitive (NEW-ARCH-013 / FR-255) ──────────
 #
-# Per ADR-013: per-binary helpers (_invoke_mvn_safe / _invoke_gradle_safe /
-# legacy _invoke_javap_safe) compose this primitive with binary-specific
-# resolution and argv allowlists. The primitive enforces only the
+# Per ADR-013: per-binary helpers (_invoke_mvn_safe / legacy
+# _invoke_javap_safe) compose this primitive with binary-specific
+# resolution and argv allowlists. There is deliberately no Gradle helper:
+# running Gradle evaluates the analysed build script (SEC-011, issue #1). The primitive enforces only the
 # universal contract:
 #   * shell=False
 #   * mandatory positive timeout

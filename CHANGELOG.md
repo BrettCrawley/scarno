@@ -39,6 +39,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Both were reported by a Claude Security scan of `a4cc442` as findings F1, F2,
   F10 and F12 (F1, F10 and F12 being three reports of the same root cause), and
   the patches were applied unmodified.
+- **Removed the latent Gradle subprocess path (GitHub issue #1).**
+  `_invoke_gradle_safe` would have run `gradle` with the analysed repository as
+  its working directory, the same vector as F2. Unlike Maven, the fix cannot be
+  a scratch directory: `gradle dependencies` has to run inside the project, and
+  doing so evaluates its build scripts, which is code execution on an untrusted
+  tree. Nothing called the helper, so no released version ran Gradle. It was
+  removed rather than fixed, so it cannot be wired up later. The binary
+  resolver and the argv allowlist went with it, which withdraws the Gradle
+  halves of SEC-NEW-52 and SEC-NEW-55.
+
+  The text parsers stay because they spawn nothing:
+  - `gradle dependencies` edge emission (FR-192)
+  - `gradle.lockfile` reading with lockfile-wins priority (FR-204)
+  - the lockfile cross-check (SEC-NEW-53)
+
+  A new static test
+  (`tests/security/test_no_gradle_spawn.py`, SEC-011) fails if any code under
+  `src/scarno` imports a spawn API into the Gradle analyser, reads
+  `GRADLE_HOME`, or hands a `gradle`/`gradlew` binary to a spawn primitive or
+  `shutil.which`. No change to analysis output.
 
 ### Fixed
 - **Deleted method overloads were invisible to the cross-version ABI diff.**
