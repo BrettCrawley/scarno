@@ -61,6 +61,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `shutil.which`. No change to analysis output.
 
 ### Fixed
+- **A method whose only change was its return type was invisible to the
+  cross-version ABI diff.** `JavaSignature` did not record return types, so
+  `int size(String)` → `long size(String)` matched as identical. It is a
+  `NoSuchMethodError` at every call site compiled against the old version,
+  because compiled calls name the return type. The parser now records it and
+  `signature_diff` compares it, reporting the change as CHANGED (FR-277).
+  Finding messages prefix the return type, so the reported symbol differs from
+  the declared side.
+
+  The return type is kept out of the descriptor on purpose. javap emits a
+  covariant override's bridge method beside the real one, and folding the
+  return type in would make those churn as added/removed. A bridge pair present
+  in both versions still reports nothing. Losing a bridge is reported, since
+  callers linked against it break.
+
+  This can add `TS-ABI-*` findings on upgrade. Generic return types are compared
+  as javap prints them, as parameters already were, so a change visible only in
+  generics (`List<String>` → `List<Object>`) reads as CHANGED even though the
+  erased bytecode signature is the same.
 - **Deleted method overloads were invisible to the cross-version ABI diff.**
   `signature_diff()` matched symbols on `(class, kind, name)` and collapsed
   each match to a single arbitrary signature, so a deleted overload of a

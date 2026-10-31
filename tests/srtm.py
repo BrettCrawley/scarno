@@ -397,6 +397,7 @@ FUNCTIONAL_REQUIREMENTS: frozenset[str] = frozenset(
         # REQ-22 — non-private ABI surface (SCARNO-BUG-protected-members)
         "FR-275",  # javap extraction runs at -package: public + protected + package-private
         "FR-276",  # parser covers every access level, constructors, and throws clauses
+        "FR-277",  # method return type is recorded and compared; a return-type-only change is CHANGED
         # COMP-005 — REQ-24 GDPR compliance touchpoint (consent gate + disclosure)
         "COMP-005",  # GDPR — operator IP disclosure to index hosts; consent via --allow-remote-fetch + PUC-006/008
     }

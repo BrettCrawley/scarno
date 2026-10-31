@@ -176,6 +176,7 @@ def javap_public_signatures(stdout: str) -> set[JavaSignature]:
             # first element of the identity tuple).
             if is_constructor:
                 name = simple_class
+            raw_return = mm.group("return")
             out.add(
                 JavaSignature(
                     fqcn=current_fqcn,
@@ -183,6 +184,12 @@ def javap_public_signatures(stdout: str) -> set[JavaSignature]:
                     member_name=name,
                     descriptor=f"({mm.group('args').strip()})",
                     modifiers=modifiers,
+                    # Constructors have none; a changed return type is a
+                    # binary incompatibility the diff must see.
+                    return_type=(
+                        None if is_constructor or raw_return is None
+                        else raw_return.strip()
+                    ),
                 )
             )
             continue
@@ -235,15 +242,21 @@ def _identity(sig: JavaSignature) -> tuple[str, str, str]:
 
 def _signature_sort_key(
     sig: JavaSignature,
-) -> tuple[str, str, str, str, tuple[str, ...]]:
+) -> tuple[str, str, str, str, tuple[str, ...], str]:
     """Total, hash-independent ordering over signatures — used to emit
-    findings in a fixed order regardless of set-iteration order."""
+    findings in a fixed order regardless of set-iteration order.
+
+    Return type is the final component: covariant overrides share every
+    other field, so without it two bridges would sort equal and fall back
+    to set-iteration order.
+    """
     return (
         sig.fqcn,
         sig.member_kind,
         sig.member_name,
         sig.descriptor,
         tuple(sorted(sig.modifiers)),
+        sig.return_type or "",
     )
 
 
@@ -327,9 +340,16 @@ def signature_diff(
             for desc in new:
                 added |= r_map[desc]
         for desc in set(d_map) & set(r_map):
-            d_mods = {s.modifiers for s in d_map[desc]}
-            r_mods = {s.modifiers for s in r_map[desc]}
-            if d_mods != r_mods:
+            # Compare modifiers AND return type. The return type is not
+            # part of the descriptor on purpose — folding it in would
+            # split covariant overrides, and javap emits the synthetic
+            # bridge beside the real method — but it IS part of what the
+            # JVM resolves, so a change to it must surface. Comparing
+            # sets means a bridge pair present on both sides matches,
+            # while a genuine retype does not.
+            d_shape = {(s.modifiers, s.return_type) for s in d_map[desc]}
+            r_shape = {(s.modifiers, s.return_type) for s in r_map[desc]}
+            if d_shape != r_shape:
                 changed |= r_map[desc]
 
     return AbiDiffResult(
@@ -826,11 +846,18 @@ class CrossVersionAbiDiffer:
                 relocated_to = None
             symbol_id = f"{sig.fqcn}.{sig.member_name}"
             # Fields carry a type descriptor, members a parameter list.
-            symbol_display = (
-                f"{sig.descriptor} {symbol_id}"
-                if sig.member_kind == "field"
-                else f"{symbol_id}{sig.descriptor}"
-            )
+            # A method's return type is prefixed when known: a change to
+            # it alone is a binary incompatibility, and without it the
+            # message would name text identical to the declared side and
+            # read as though nothing had changed.
+            if sig.member_kind == "field":
+                symbol_display = f"{sig.descriptor} {symbol_id}"
+            elif sig.return_type:
+                symbol_display = (
+                    f"{sig.return_type} {symbol_id}{sig.descriptor}"
+                )
+            else:
+                symbol_display = f"{symbol_id}{sig.descriptor}"
             is_called = any(
                 symbol_id == ref or ref.endswith("." + sig.member_name)
                 for ref in source_symbols

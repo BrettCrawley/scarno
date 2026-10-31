@@ -61,7 +61,16 @@ Each workstream is one commit or a short series. Run the full gate
 before every commit:
 `uv run pytest --srtm-fail-on-gap && uv run mypy src`.
 
-### 1. Land the return-type ABI change (FR-233)
+### 1. Land the return-type ABI change (FR-233) — DONE
+
+Landed with new requirement FR-277 and
+`tests/unit/test_req22_return_type.py` (TA-367..TA-375, 9 tests, all
+red without the change). The "bridge pair → single method" case is
+asserted as CHANGED, and that is intended: callers linked against the
+lost bridge's return type fail with `NoSuchMethodError`. Generic return
+types are compared as javap prints them, matching parameters, which is
+recorded in the CHANGELOG. Workstream 2 (lockfile) landed as `411ab73`.
+
 
 Add tests in `tests/unit/` next to the existing `signature_diff` tests,
 marked `@pytest.mark.requirement("FR-233")`:

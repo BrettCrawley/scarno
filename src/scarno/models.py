@@ -194,6 +194,20 @@ class JavaSignature:
     member_name: str
     descriptor: str
     modifiers: frozenset[str]
+    # A method's return type, or None for constructors and fields (a
+    # field's type is already its descriptor).
+    #
+    # Deliberately NOT folded into ``descriptor``. Changing a return type
+    # is binary-incompatible — a caller's compiled invokevirtual names
+    # ``owner.name:(args)returnType`` — so it must be compared; but
+    # making it part of the descriptor would split covariant overrides
+    # into separate members, and javap emits the compiler-generated
+    # bridge alongside the real method (``StringBuilder append(int)``
+    # beside ``AbstractStringBuilder append(int)``). Those would then
+    # churn as added/removed on any hierarchy change. As a separate
+    # field it takes part in the CHANGED comparison while leaving
+    # identity and descriptor grouping alone.
+    return_type: str | None = None
 
 
 @dataclass
