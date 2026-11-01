@@ -65,6 +65,8 @@ class JavascriptAnalyser(BaseAnalyser):
             str(root), deps,
             exclude_tests=self.exclude_tests,
             user_test_paths=self.test_paths,
+            gitignore=self.gitignore,
+            operator_excludes=self.operator_excludes,
         )
 
         # HTML/template scanning is handled by the CLI orchestrator as a

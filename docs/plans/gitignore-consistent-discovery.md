@@ -1,6 +1,6 @@
 # Plan: Consistent `.gitignore` handling across every analyser, and closing F23
 
-**Status:** Steps 1–5 done (2026-11-01); F23 closed. Python, HTML, CSS and Java/Kotlin are on shared discovery. Steps 6–9 to do. Supersedes
+**Status:** Steps 1–6 done (2026-11-01); F23 closed. Python, HTML, CSS, Java/Kotlin and JS/TS are on shared discovery. Steps 7–9 to do. Supersedes
 workstream 4 of `roadmap-closeout.md`.
 
 ## Context
@@ -455,6 +455,35 @@ IDs are registered in `tests/srtm.py`:
      Left as a separate item.
 6. **JS/TS.** `_scan_tree`. Test: a gitignored generated client as the
    only importer.
+
+   **Done (2026-11-01).** `_scan_tree` uses `discover()` (with the
+   existing `--exclude-tests` matcher) and returns the full-weight facts
+   plus, under `uncertain`, a second set from gitignored files. Those
+   can only lift a SAFE dep to UNCERTAIN. Tests in
+   `tests/unit/test_gitignore_js_classification.py`.
+
+   Back-compat against `4fb3c38`: every `package.json` fixture, the six
+   step 1 samples and scarno's own tree are identical in all three
+   modes. The 237 virtualenv `.js` files step 1 counted are in
+   djangoproject.com, which has no `package.json`, so the JS analyser
+   never ran there; the virtualenv case is covered by a test instead.
+
+   Decisions:
+   - **Only named evidence from gitignored files counts:** a static or
+     literal dynamic import, or an ambient `declare module`. In a
+     tracked file a non-literal `require(x)` makes every dep UNCERTAIN.
+     A gitignored bundle is full of them, so counting it would turn
+     every SAFE dep UNCERTAIN.
+   - **Gitignored imports never add an UNDECLARED entry** outside
+     `include`. Ignored-only evidence is enough to doubt a removal, not
+     to claim a dependency.
+   - **A type stub follows its runtime package.** `@types/express` is
+     UNCERTAIN when `express` is used only in gitignored files.
+   - **By-name directories (`dist`, `build`, `.next`, `coverage` …)
+     still never count, gitignored or not.** Unlike Java's
+     `target/generated-sources`, they hold build output of the tracked
+     sources, so their imports repeat the source's evidence or are
+     stale.
 7. **Go.** `_scan_tree`. Keep `vendor/` and `testdata/` excluded from
    classification as today. Test the gitignored-only case.
 8. **C#.** `_scan_tree`. Test: gitignored `obj/` generated source.

@@ -32,12 +32,19 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from scarno.core.discovery import (
+    GITIGNORED_ONLY_REASON,
+    GitignoreMode,
+    discover,
+    load_gitignore_matcher,
+    unignored_environments_line,
+)
 from scarno.models import Dependency, DependencyStatus, EntryPoint
-from scarno.security import MAX_FILE_BYTES, PathEscapeError, resolve_and_confine
+from scarno.security import PathEscapeError, resolve_and_confine
 
 if TYPE_CHECKING:
     from scarno.core.test_scope import TestScopeMatcher
@@ -160,8 +167,15 @@ def analyse_npm_sources(
     *,
     exclude_tests: bool = False,
     user_test_paths: tuple[str, ...] = (),
+    gitignore: GitignoreMode = GitignoreMode.UNCERTAIN,
+    operator_excludes: tuple[str, ...] = (),
 ) -> tuple[list[Dependency], list[str]]:
-    """Classify each npm dep as IN_USE / UNCERTAIN / SAFE / UNDECLARED."""
+    """Classify each npm dep as IN_USE / UNCERTAIN / SAFE / UNDECLARED.
+
+    ``gitignore`` decides how gitignored sources count (FR-278). Under
+    ``UNCERTAIN`` they are read apart and can only lift a SAFE dep to
+    UNCERTAIN; they never add an UNDECLARED entry.
+    """
     from scarno.core.test_scope import TestScopeMatcher
 
     errors: list[str] = []
@@ -179,7 +193,10 @@ def analyse_npm_sources(
         exclude_tests=exclude_tests,
         user_patterns=user_test_paths,
     )
-    facts = _scan_tree(root, errors, test_matcher=test_matcher)
+    facts, ignored_facts = _scan_tree(
+        root, errors, test_matcher=test_matcher,
+        gitignore=gitignore, operator_excludes=operator_excludes,
+    )
     tsconfig_paths = _load_tsconfig_paths(root, errors)
 
     # Every import target that matches a tsconfig-path mapping is a local
@@ -308,6 +325,40 @@ def analyse_npm_sources(
             )
         )
 
+    # FR-278 — a dep still SAFE that only gitignored files name is
+    # UNCERTAIN, not SAFE. Only named evidence counts: a static or literal
+    # dynamic import, or an ambient ``declare module``. A non-literal
+    # ``require(x)`` in a gitignored bundle would otherwise make every dep
+    # UNCERTAIN. A type stub follows its runtime package. The reason is a
+    # fixed literal and names no file (PRV-008).
+    if ignored_facts is not None:
+        ignored_names = {
+            imp
+            for imp in (
+                ignored_facts.static_imports
+                | ignored_facts.dynamic_literals
+                | ignored_facts.ambient_modules
+            )
+            if not _is_local_alias(imp)
+        }
+        if ignored_names:
+            from scarno.analysers.javascript.dep_file_parser import (
+                _runtime_target_for_types_stub,
+            )
+
+            for i, dep in enumerate(updated):
+                if dep.ecosystem != "npm" or dep.status is not DependencyStatus.SAFE:
+                    continue
+                named = dep.name
+                if dep.is_type_stub:
+                    named = _runtime_target_for_types_stub(dep.name) or dep.name
+                if named in ignored_names:
+                    updated[i] = replace(
+                        dep,
+                        status=DependencyStatus.UNCERTAIN,
+                        reason=GITIGNORED_ONLY_REASON,
+                    )
+
     # REQ-3b analogue — phantom imports (imports with no declaration)
     phantoms = _build_phantom_deps(
         filtered_static, matched_imports, declared
@@ -316,45 +367,59 @@ def analyse_npm_sources(
     return updated, errors
 
 
+_JS_SUFFIXES = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".mts", ".cts")
+
+
 def _scan_tree(
     root: Path,
     errors: list[str],
     *,
     test_matcher: "TestScopeMatcher | None" = None,
-) -> _Facts:
+    gitignore: GitignoreMode = GitignoreMode.UNCERTAIN,
+    operator_excludes: tuple[str, ...] = (),
+) -> tuple[_Facts, _Facts | None]:
+    """Return ``(facts, ignored_facts)``.
+
+    ``facts`` comes from the files that count with full weight under
+    ``gitignore``. ``ignored_facts`` comes from gitignored files under
+    ``UNCERTAIN`` and is ``None`` otherwise. Directories excluded by name
+    (``dist``, ``build`` …) are build output of tracked sources and never
+    count, in any mode.
+    """
     facts = _Facts()
     if not JS_AST_AVAILABLE:
-        return facts
-    for pattern in ("*.js", "*.mjs", "*.cjs", "*.jsx", "*.ts", "*.tsx", "*.mts", "*.cts"):
-        for raw_path in root.rglob(pattern):
-            rel_parts = raw_path.relative_to(root).parts
-            if any(p in _EXCLUDED_DIR_NAMES for p in rel_parts):
-                continue
-            if test_matcher is not None:
-                rel_path_str = "/".join(rel_parts)
-                if test_matcher.is_test_path(rel_path_str):
-                    continue
-            try:
-                resolved = resolve_and_confine(raw_path, root)
-            except PathEscapeError:
-                errors.append(
-                    f"js source: symlink escape blocked: {'/'.join(rel_parts)}"
-                )
-                continue
-            try:
-                size = resolved.stat().st_size
-            except OSError:
-                continue
-            if size > MAX_FILE_BYTES:
-                errors.append(f"js source: skipped {resolved.name} — too large")
-                continue
-            try:
-                source_bytes = resolved.read_bytes()
-            except OSError as exc:
-                errors.append(f"js source: read failed {resolved.name} — {exc}")
-                continue
-            _scan_file(source_bytes, pattern, facts, errors, resolved.name)
-    return facts
+        return facts, None
+    matcher = load_gitignore_matcher(errors, "js source")
+    found = discover(
+        root,
+        _JS_SUFFIXES,
+        errors,
+        label="js source",
+        classification_excluded_dirs=_EXCLUDED_DIR_NAMES,
+        operator_excludes=operator_excludes,
+        test_matcher=test_matcher,
+        gitignore_matcher=matcher,
+        use_gitignore=matcher is not None,
+    )
+    if found.environment_dirs_unignored:
+        # PRV-008 — the CLI keeps one such line per run.
+        errors.append(unignored_environments_line(found.environment_dirs_unignored))
+    _scan_paths(found.for_classification(gitignore), facts, errors)
+    ignored_facts: _Facts | None = None
+    if gitignore is GitignoreMode.UNCERTAIN and found.ignored:
+        ignored_facts = _Facts()
+        _scan_paths(found.ignored, ignored_facts, errors)
+    return facts, ignored_facts
+
+
+def _scan_paths(paths: list[Path], facts: _Facts, errors: list[str]) -> None:
+    for path in paths:
+        try:
+            source_bytes = path.read_bytes()
+        except OSError as exc:
+            errors.append(f"js source: read failed {path.name} — {exc}")
+            continue
+        _scan_file(source_bytes, f"*{path.suffix.lower()}", facts, errors, path.name)
 
 
 def _scan_file(
