@@ -49,10 +49,13 @@ from typing import Any
 from scarno.analysers.python.import_aliases import IMPORT_ALIASES
 from scarno.analysers.python.notebook_parser import extract_code_cells
 from scarno.core.discovery import (
+    GITIGNORED_ONLY_REASON,
     GitignoreMode,
     discover,
+    gitignored_findings_line,
     is_operator_excluded,
     load_gitignore_matcher,
+    unignored_environments_line,
 )
 from scarno.core.test_scope import TestScopeMatcher
 from scarno.findings import apply_rules, load_suppression_config
@@ -71,26 +74,10 @@ _VENDOR_DIR_NAMES: frozenset[str] = frozenset(
 
 _STDLIB_NAMES: frozenset[str] = frozenset(sys.stdlib_module_names)
 
-# FR-278 / PRV-008 — fixed texts. Shared with the other analysers as they
-# move onto core.discovery, so a run reports one wording, not several.
-GITIGNORED_ONLY_REASON = (
-    "used only in files excluded by .gitignore (e.g. generated code); "
-    "verify before removing"
-)
-
-
-def gitignored_findings_line(count: int) -> str:
-    return (
-        f"{count} finding(s) came from files the project's .gitignore "
-        f"excludes"
-    )
-
-
-def unignored_environments_line(count: int) -> str:
-    return (
-        f"{count} installed-environment tree(s) not scanned and not "
-        f"covered by .gitignore — check they are not committed"
-    )
+# GITIGNORED_ONLY_REASON, gitignored_findings_line and
+# unignored_environments_line live in core.discovery, shared by every
+# analyser (FR-278 / PRV-008). The import above keeps
+# ``from scarno.analysers.python.source_analyser import ...`` working.
 
 
 _EXCLUDED_DIRS: frozenset[str] = frozenset(

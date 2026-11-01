@@ -55,6 +55,7 @@ from __future__ import annotations
 import enum
 import fnmatch
 import os
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -89,6 +90,68 @@ ENVIRONMENT_DIR_NAMES: frozenset[str] = frozenset(
 ENVIRONMENT_MARKER_FILES: frozenset[str] = frozenset({"pyvenv.cfg"})
 
 _NEVER_ENTER: frozenset[str] = frozenset({".git"})
+
+
+# FR-278 / PRV-008 — fixed texts shared by every analyser, so a run reports
+# one wording. The reason names no file, and the audit lines are a fixed
+# literal plus an integer, so no path can leak through them.
+GITIGNORED_ONLY_REASON = (
+    "used only in files excluded by .gitignore (e.g. generated code); "
+    "verify before removing"
+)
+
+
+def gitignored_findings_line(count: int) -> str:
+    return (
+        f"{count} finding(s) came from files the project's .gitignore "
+        f"excludes"
+    )
+
+
+def unignored_environments_line(count: int) -> str:
+    return (
+        f"{count} installed-environment tree(s) not scanned and not "
+        f"covered by .gitignore — check they are not committed"
+    )
+
+
+def _line_pattern(make: Callable[[int], str]) -> re.Pattern[str]:
+    # Derived from the line function itself, so the two cannot drift.
+    sentinel = 987654321
+    return re.compile(
+        "^" + re.escape(make(sentinel)).replace(str(sentinel), r"(\d+)") + "$"
+    )
+
+
+_FINDINGS_LINE_RE = _line_pattern(gitignored_findings_line)
+_ENVIRONMENTS_LINE_RE = _line_pattern(unignored_environments_line)
+
+
+def consolidate_audit_lines(errors: list[str]) -> list[str]:
+    """Fold every analyser's audit lines into one of each per run.
+
+    Each analyser that walks the tree reports its own counts. Findings
+    come from disjoint file types, so their counts add up. Installed
+    environments are pruned by structure, whatever the file suffix, so
+    every walk over the same root finds the same ones: that count is the
+    maximum, not the sum. Other lines keep their order; the two audit
+    lines go last.
+    """
+    findings = 0
+    environments = 0
+    kept: list[str] = []
+    for line in errors:
+        if m := _FINDINGS_LINE_RE.match(line):
+            findings += int(m.group(1))
+        elif m := _ENVIRONMENTS_LINE_RE.match(line):
+            environments = max(environments, int(m.group(1)))
+        else:
+            kept.append(line)
+    if findings:
+        kept.append(gitignored_findings_line(findings))
+    if environments:
+        kept.append(unignored_environments_line(environments))
+    return kept
 
 
 def sanitise_exclude_globs(raw: tuple[str, ...]) -> tuple[str, ...]:

@@ -47,7 +47,12 @@ from scarno.analysers.javascript import JavascriptAnalyser  # noqa: F401
 from scarno.analysers.python import PythonAnalyser  # noqa: F401
 from scarno.core import detector, registry
 from scarno.core.base_analyser import BaseAnalyser
-from scarno.core.discovery import GitignoreMode, sanitise_exclude_globs
+from scarno.core.discovery import (
+    GITIGNORED_ONLY_REASON,
+    GitignoreMode,
+    consolidate_audit_lines,
+    sanitise_exclude_globs,
+)
 from scarno.core.test_scope import sanitise_test_paths
 from scarno.models import (
     CANONICAL_ECOSYSTEMS,
@@ -707,7 +712,11 @@ def _run(opts: _RunOptions) -> int:
     # This runs as a cross-cutting pass regardless of detected languages
     # so CDN-only projects (no package.json) still surface dependencies.
     from scarno.analysers.html_scanner import scan_html_templates
-    html = scan_html_templates(str(project_path))
+    html = scan_html_templates(
+        str(project_path),
+        gitignore=opts.gitignore,
+        operator_excludes=opts.operator_excludes,
+    )
     merged.errors.extend(html.errors)
     merged.findings.extend(html.findings)
     declared_names = {d.name for d in merged.dependencies}
@@ -730,6 +739,27 @@ def _run(opts: _RunOptions) -> int:
                     ecosystem="npm",
                 )
             )
+    # FR-278 — loaded only by gitignored templates (default mode). The
+    # tracked pass above ran first, so a tracked template still wins.
+    for html_dep in html.ignored_only_dependencies:
+        if html_dep.name not in declared_names:
+            declared_names.add(html_dep.name)
+            merged.dependencies.append(
+                Dependency(
+                    name=html_dep.name,
+                    version=html_dep.version,
+                    status=DependencyStatus.UNCERTAIN,
+                    reason=GITIGNORED_ONLY_REASON,
+                    entry_points=[],
+                    entry_points_used=0,
+                    entry_points_total=0,
+                    source=f"{html_dep.source_file}:{html_dep.source_type}",
+                    ecosystem="npm",
+                )
+            )
+    # PRV-008 — every walk reports its own audit counts; the run reports
+    # one line of each.
+    merged.errors[:] = consolidate_audit_lines(merged.errors)
 
     if unrunnable_types:
         for lang in unrunnable_types:
@@ -888,6 +918,7 @@ def run_analysis(
         a.exclude_dev = fresh_opts.exclude_dev
     sub_results = [a.analyse(str(project_path)) for a in analysers]
     merged = _merge_results(project_path, project_types, sub_results)
+    merged.errors[:] = consolidate_audit_lines(merged.errors)
     merged = _propagate_in_use_through_graph(merged)
     visible = _apply_show_suppressed(merged, fresh_opts.show_suppressed)
     return _render(visible, output_format)

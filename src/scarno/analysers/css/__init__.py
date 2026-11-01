@@ -21,6 +21,12 @@ remote-URL ``@import`` and ``file://`` ``url()`` patterns.
 **Scope**: this is NOT a dead-selector analyser. Scarno's remit is
 "find unused packages"; CSS support narrows that to stylesheet deps
 that come through npm (`~package/...` / bare-specifier `@import`).
+
+``.gitignore`` (FR-278 / SEC-NEW-75): the ``TS-CE-007`` / ``TS-CE-008``
+rules read every stylesheet :func:`scarno.core.discovery.discover`
+returns, gitignored ones and ``dist`` / ``build`` included. Dependency
+extraction reads tracked stylesheets, and gitignored ones according to
+``self.gitignore``.
 """
 from __future__ import annotations
 
@@ -30,6 +36,14 @@ from pathlib import Path
 
 from scarno.core import registry
 from scarno.core.base_analyser import BaseAnalyser
+from scarno.core.discovery import (
+    GITIGNORED_ONLY_REASON,
+    GitignoreMode,
+    discover,
+    gitignored_findings_line,
+    load_gitignore_matcher,
+    unignored_environments_line,
+)
 from scarno.findings.rules import RULES
 from scarno.models import (
     AnalysisResult,
@@ -37,12 +51,7 @@ from scarno.models import (
     DependencyStatus,
     Finding,
 )
-from scarno.security import (
-    MAX_FILE_BYTES,
-    PathEscapeError,
-    resolve_and_confine,
-    sanitise,
-)
+from scarno.security import sanitise
 
 _MAX_SNIPPET = 200
 
@@ -68,6 +77,8 @@ _URL_REF_RE = re.compile(
 )
 
 _CSS_EXTS: tuple[str, ...] = ("*.css", "*.scss", "*.sass", "*.less", "*.styl")
+_CSS_SUFFIXES: tuple[str, ...] = tuple(ext[1:] for ext in _CSS_EXTS)
+# Excluded from dependency extraction only; the rules still read them.
 _EXCLUDED_DIR_NAMES: frozenset[str] = frozenset(
     {"node_modules", ".git", "dist", "build"}
 )
@@ -95,35 +106,62 @@ class CssAnalyser(BaseAnalyser):
         errors: list[str] = []
         findings: list[Finding] = []
         deps: dict[str, Dependency] = {}
+        # FR-278 — under GitignoreMode.UNCERTAIN, deps seen only in
+        # gitignored stylesheets. Resolved after the walk, so a tracked
+        # stylesheet anywhere in the tree wins.
+        ignored_deps: dict[str, Dependency] = {}
 
-        for ext in _CSS_EXTS:
-            for raw_path in root.rglob(ext):
-                rel_parts = raw_path.relative_to(root).parts
-                if any(p in _EXCLUDED_DIR_NAMES for p in rel_parts):
+        found = discover(
+            root,
+            _CSS_SUFFIXES,
+            errors,
+            label="css",
+            classification_excluded_dirs=_EXCLUDED_DIR_NAMES,
+            operator_excludes=self.operator_excludes,
+            gitignore_matcher=load_gitignore_matcher(errors, "css"),
+        )
+        ignored = set(found.ignored)
+        rule_only = set(found.rule_only)
+        ignored_findings = 0
+
+        for resolved in found.for_rules():
+            try:
+                text = resolved.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                errors.append(f"css: could not read {resolved.name} — {exc}")
+                continue
+            rel = resolved.relative_to(root).as_posix()
+            file_deps: dict[str, Dependency] = {}
+            file_findings: list[Finding] = []
+            _scan_css(text, rel, file_deps, file_findings)
+            findings.extend(file_findings)
+
+            if resolved in rule_only:
+                continue
+            target = deps
+            if resolved in ignored:
+                ignored_findings += len(file_findings)
+                if self.gitignore is GitignoreMode.EXCLUDE:
                     continue
-                try:
-                    resolved = resolve_and_confine(raw_path, root)
-                except PathEscapeError:
-                    errors.append(
-                        f"css: symlink escape blocked: {'/'.join(rel_parts)}"
-                    )
-                    continue
-                try:
-                    size = resolved.stat().st_size
-                except OSError:
-                    continue
-                if size > MAX_FILE_BYTES:
-                    errors.append(f"css: skipped {resolved.name} — too large")
-                    continue
-                try:
-                    text = resolved.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError) as exc:
-                    errors.append(
-                        f"css: could not read {resolved.name} — {exc}"
-                    )
-                    continue
-                rel = str(resolved.relative_to(root))
-                _scan_css(text, rel, deps, findings)
+                if self.gitignore is GitignoreMode.UNCERTAIN:
+                    target = ignored_deps
+            for name, dep in file_deps.items():
+                target.setdefault(name, dep)
+
+        for name, dep in ignored_deps.items():
+            if name not in deps:
+                dep.status = DependencyStatus.UNCERTAIN
+                dep.reason = GITIGNORED_ONLY_REASON
+                deps[name] = dep
+
+        # PRV-008 — fixed literal plus a count. The CLI folds these into
+        # one of each per run (core.discovery.consolidate_audit_lines).
+        if ignored_findings:
+            errors.append(gitignored_findings_line(ignored_findings))
+        if found.environment_dirs_unignored:
+            errors.append(
+                unignored_environments_line(found.environment_dirs_unignored)
+            )
 
         # HTML/template scanning is handled by the CLI orchestrator as a
         # cross-cutting pass (runs once for the whole project, not per

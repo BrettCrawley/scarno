@@ -38,20 +38,32 @@ HTML surface regardless of server-side templating language):
 
 Safety:
   * Regex-based — never executes or evaluates template content.
-  * File-size cap (``MAX_FILE_BYTES``).
-  * Excluded directories (node_modules, vendor, etc.).
+  * Files are found by :func:`scarno.core.discovery.discover`: confined
+    to the project root, capped at ``MAX_FILE_BYTES``, and installed
+    environments (virtualenvs, ``node_modules``) pruned by structure.
+
+``.gitignore`` (FR-278 / SEC-NEW-75): the ``TS-CE-012`` rule reads every
+template discovery returns, gitignored ones and the by-name excluded
+directories (``dist``, ``vendor`` …) included. Dependency extraction reads
+tracked templates, and gitignored ones according to the
+:class:`~scarno.core.discovery.GitignoreMode`.
 """
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from scarno.core.discovery import (
+    GitignoreMode,
+    discover,
+    gitignored_findings_line,
+    load_gitignore_matcher,
+    unignored_environments_line,
+)
 from scarno.findings.rules import RULES
 from scarno.models import Finding
-from scarno.security import MAX_FILE_BYTES, PathEscapeError, resolve_and_confine
 
 _MAX_SNIPPET = 200
 
@@ -81,6 +93,8 @@ _TEMPLATE_EXTS: frozenset[str] = frozenset(
     }
 )
 
+# Excluded from dependency extraction only. TS-CE-012 still reads them:
+# a directory name is as easy to hide behind as .gitignore (SEC-NEW-75).
 _EXCLUDED_DIR_NAMES: frozenset[str] = frozenset(
     {"node_modules", ".git", "vendor", "bin", "obj", "dist", "build",
      ".next", ".nuxt", "coverage", "__pycache__"}
@@ -162,6 +176,10 @@ class HtmlDependency:
 class HtmlScanResult:
     """Aggregated results from scanning all HTML/template files."""
     dependencies: list[HtmlDependency] = field(default_factory=list)
+    #: FR-278 — under ``GitignoreMode.UNCERTAIN``, dependencies found only
+    #: in gitignored templates. The caller reports them as UNCERTAIN unless
+    #: a tracked template also uses them.
+    ignored_only_dependencies: list[HtmlDependency] = field(default_factory=list)
     remote_urls: list[tuple[str, str, str]] = field(default_factory=list)  # (url, file, type)
     findings: list[Finding] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -170,8 +188,16 @@ class HtmlScanResult:
 # ── Public API ────────────────────────────────────────────────────────────
 
 
-def scan_html_templates(project_path: str) -> HtmlScanResult:
+def scan_html_templates(
+    project_path: str,
+    *,
+    gitignore: GitignoreMode = GitignoreMode.UNCERTAIN,
+    operator_excludes: tuple[str, ...] = (),
+) -> HtmlScanResult:
     """Scan all HTML/template files for JS + CSS dependencies.
+
+    *gitignore* and *operator_excludes* come from argv only (FR-278,
+    SEC-NEW-76); *operator_excludes* must already be sanitised.
 
     Never raises. Returns structured results that callers (JS analyser,
     CSS analyser, polyglot orchestrator) merge into their dep lists.
@@ -186,41 +212,52 @@ def scan_html_templates(project_path: str) -> HtmlScanResult:
     if not root.is_dir():
         return result
 
-    for raw_path in _iter_template_files(root):
-        rel_parts = raw_path.relative_to(root).parts
-        if any(p in _EXCLUDED_DIR_NAMES for p in rel_parts):
-            continue
-        try:
-            resolved = resolve_and_confine(raw_path, root)
-        except PathEscapeError:
-            result.errors.append(
-                f"html_scanner: symlink escape blocked: {'/'.join(rel_parts)}"
-            )
-            continue
-        try:
-            size = resolved.stat().st_size
-        except OSError:
-            continue
-        if size > MAX_FILE_BYTES:
-            result.errors.append(f"html_scanner: skipped {resolved.name} — too large")
-            continue
+    found = discover(
+        root,
+        _TEMPLATE_EXTS,
+        result.errors,
+        label="html_scanner",
+        classification_excluded_dirs=_EXCLUDED_DIR_NAMES,
+        operator_excludes=operator_excludes,
+        gitignore_matcher=load_gitignore_matcher(result.errors, "html_scanner"),
+    )
+    ignored = set(found.ignored)
+    rule_only = set(found.rule_only)
+    ignored_findings = 0
+
+    for resolved in found.for_rules():
         try:
             text = resolved.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
             result.errors.append(f"html_scanner: read failed {resolved.name} — {exc}")
             continue
 
-        rel = str(resolved.relative_to(root))
-        _scan_html(text, rel, result)
+        rel = resolved.relative_to(root).as_posix()
+        per_file = HtmlScanResult()
+        _scan_html(text, rel, per_file)
 
+        result.findings.extend(per_file.findings)
+        result.remote_urls.extend(per_file.remote_urls)
+        if resolved in rule_only:
+            continue
+        if resolved in ignored:
+            ignored_findings += len(per_file.findings)
+            if gitignore is GitignoreMode.INCLUDE:
+                result.dependencies.extend(per_file.dependencies)
+            elif gitignore is GitignoreMode.UNCERTAIN:
+                result.ignored_only_dependencies.extend(per_file.dependencies)
+            continue
+        result.dependencies.extend(per_file.dependencies)
+
+    # PRV-008 — fixed literal plus a count. The CLI folds these into one
+    # of each per run (core.discovery.consolidate_audit_lines).
+    if ignored_findings:
+        result.errors.append(gitignored_findings_line(ignored_findings))
+    if found.environment_dirs_unignored:
+        result.errors.append(
+            unignored_environments_line(found.environment_dirs_unignored)
+        )
     return result
-
-
-def _iter_template_files(root: Path) -> Iterator[Path]:
-    """Yield all template files in the project tree."""
-    for raw_path in root.rglob("*"):
-        if raw_path.is_file() and raw_path.suffix.lower() in _TEMPLATE_EXTS:
-            yield raw_path
 
 
 def _scan_html(text: str, file_path: str, result: HtmlScanResult) -> None:

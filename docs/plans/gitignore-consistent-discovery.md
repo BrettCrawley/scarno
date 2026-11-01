@@ -1,6 +1,6 @@
 # Plan: Consistent `.gitignore` handling across every analyser, and closing F23
 
-**Status:** Steps 1–3 done (2026-10-31); F23 closed for Python. Steps 4–9 to do. Supersedes
+**Status:** Steps 1–4 done (2026-10-31); F23 closed. Python, HTML and CSS are on shared discovery. Steps 5–9 to do. Supersedes
 workstream 4 of `roadmap-closeout.md`.
 
 ## Context
@@ -365,6 +365,61 @@ IDs are registered in `tests/srtm.py`:
 4. **HTML scanner + CSS.** These are the other two rule-bearing
    analysers. Same pattern and the same test shape, using `TS-CE-012`
    and `TS-CE-007` payloads.
+   **Done (2026-10-31).** `html_scanner.scan_html_templates` and
+   `CssAnalyser.analyse` run on `core.discovery`. Tests:
+   `tests/security/test_gitignore_html_css_rules.py` (SEC-NEW-75,
+   SEC-NEW-76, PRV-008) and
+   `tests/unit/test_gitignore_html_css_classification.py` (FR-278,
+   PRV-008).
+
+   Neither walk ever honoured `.gitignore`, so F23 did not apply to
+   them. Their by-name skip lists were the same blind spot in another
+   form. Both detect undeclared npm packages (a CDN `<script src>`, an
+   `@import "~pkg"`); neither marks a declared dep IN_USE. So the mode
+   governs only how a *detected* entry from a gitignored file appears:
+   UNCERTAIN with the fixed reason (default), IN_USE (`include`), or
+   not at all (`exclude`). A tracked file anywhere in the tree wins.
+
+   **Back-compat check:** we compared JSON against `4570aaf` for every
+   fixture, every step 1 sample and scarno's own tree, in the default
+   mode and under `--gitignore include`. All fixtures, flask,
+   rubygems.org and scarno are identical. The differences are the
+   intended ones:
+   - djangoproject.com and sphinx lose the 7 `TS-CE-012` findings from
+     third-party templates in their virtualenvs that step 1 measured
+     (5 + 2), and the CSS "deps" read from those environments'
+     stylesheets.
+   - jupyter-proj loses the same for its venv, and gains the
+     unignored-environment line, since nothing in that sample ignores
+     the venv.
+   - bootstrap: statuses unchanged. For some CSS deps the reason names
+     a different file, because the walk is now sorted rather than in
+     `rglob` order. Output is deterministic as a result.
+   - Committed `dist/` CSS in bootstrap is now rule-scanned and adds 0
+     findings, as step 1 predicted.
+
+   Decisions:
+   - **One audit line of each kind per run.** Python, HTML and CSS each
+     report their own counts, so a run printed up to three "findings
+     came from" lines and counted the same `.venv` three times.
+     `core.discovery.consolidate_audit_lines`, called by the CLI after
+     the HTML pass, sums the findings counts (the walks read disjoint
+     file types) and takes the largest environment count (pruning
+     ignores suffixes, so every walk over a root finds the same
+     environments). The patterns are derived from the line functions,
+     so the two cannot drift. Analyser return signatures are unchanged.
+   - **The fixed texts moved to `core.discovery`.**
+     `GITIGNORED_ONLY_REASON` and both line helpers are still importable
+     from the Python source analyser.
+   - **By-name directories (`dist`, `build`, `vendor`, `bin`, `obj` …)
+     are rule-scanned but add no dependency in any mode.** Their
+     contents are build output, not usage.
+   - **Error lines change wording slightly.** Oversized and unreadable
+     files now use discovery's messages ("file too large (N bytes > …)"),
+     and a failed `stat` is reported instead of skipped silently. Each
+     walk loads its own gitignore matcher, so a missing `gitignorefile`
+     prints the "not installed" line once per walk. It is a hard
+     dependency, so that should not happen in practice.
 5. **Java/Kotlin.** Wire the flag the analyser already forwards into
    `_gather_source_files`. Test: gitignored
    `target/generated-sources/...` as the only user gives UNCERTAIN.
