@@ -25,14 +25,20 @@ Safety:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import re
 
 from scarno.analysers.name_counts import MAX_FULL_SCANS, count_selector_refs
+from scarno.core.discovery import (
+    GITIGNORED_ONLY_REASON,
+    GitignoreMode,
+    discover,
+    load_gitignore_matcher,
+    unignored_environments_line,
+)
 from scarno.models import Dependency, DependencyStatus, EntryPoint
-from scarno.security import MAX_FILE_BYTES, PathEscapeError, resolve_and_confine
 
 # Try to load tree-sitter-go grammar; graceful fallback on import failure.
 try:  # pragma: no cover — host-specific import path
@@ -161,9 +167,18 @@ _GO_PKG_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def analyse_go_sources(
-    project_path: str, dependencies: list[Dependency]
+    project_path: str,
+    dependencies: list[Dependency],
+    *,
+    gitignore: GitignoreMode = GitignoreMode.UNCERTAIN,
+    operator_excludes: tuple[str, ...] = (),
 ) -> tuple[list[Dependency], list[str]]:
-    """Classify each Go dep as IN_USE / SAFE / UNDECLARED."""
+    """Classify each Go dep as IN_USE / UNCERTAIN / SAFE / UNDECLARED.
+
+    ``gitignore`` decides how gitignored sources count (FR-278). Under
+    ``UNCERTAIN`` they are read apart and can only lift a SAFE dep to
+    UNCERTAIN; they never add an UNDECLARED entry.
+    """
     errors: list[str] = []
     root = Path(project_path)
     try:
@@ -174,7 +189,9 @@ def analyse_go_sources(
     if not root.is_dir():
         return list(dependencies), errors
 
-    facts = _scan_tree(root, errors)
+    facts, ignored_facts = _scan_tree(
+        root, errors, gitignore=gitignore, operator_excludes=operator_excludes,
+    )
 
     declared = {dep.name for dep in dependencies if dep.ecosystem == "go"}
     matched_imports: set[str] = set()
@@ -187,6 +204,22 @@ def analyse_go_sources(
         status, reason = _classify(dep.name, facts)
         if status is DependencyStatus.IN_USE:
             matched_imports.add(dep.name)
+        # FR-278 — a dep still SAFE that only gitignored files import is
+        # UNCERTAIN, not SAFE. The reason is a fixed literal and names no
+        # file (PRV-008).
+        if (
+            status is DependencyStatus.SAFE
+            and ignored_facts is not None
+            and _classify(dep.name, ignored_facts)[0] is not DependencyStatus.SAFE
+        ):
+            updated.append(
+                replace(
+                    dep,
+                    status=DependencyStatus.UNCERTAIN,
+                    reason=GITIGNORED_ONLY_REASON,
+                )
+            )
+            continue
         # REQ-17 / FR-150 — surface every import path that resolves to
         # this module as an entry point with its usage count.
         if status is DependencyStatus.IN_USE:
@@ -222,33 +255,54 @@ def analyse_go_sources(
 # ── Tree scanning ──────────────────────────────────────────────────────────
 
 
-def _scan_tree(root: Path, errors: list[str]) -> _Facts:
+def _scan_tree(
+    root: Path,
+    errors: list[str],
+    *,
+    gitignore: GitignoreMode = GitignoreMode.UNCERTAIN,
+    operator_excludes: tuple[str, ...] = (),
+) -> tuple[_Facts, _Facts | None]:
+    """Return ``(facts, ignored_facts)``.
+
+    ``facts`` comes from the files that count with full weight under
+    ``gitignore``. ``ignored_facts`` comes from gitignored files under
+    ``UNCERTAIN`` and is ``None`` otherwise. ``vendor/`` and ``testdata/``
+    never count, in any mode: vendored copies of dependencies and test
+    inputs the Go tool ignores.
+    """
     facts = _Facts()
     if not GO_AST_AVAILABLE:
-        return facts
-    for raw_path in root.rglob("*.go"):
-        rel_parts = raw_path.relative_to(root).parts
-        if any(p in _EXCLUDED_DIR_NAMES for p in rel_parts):
-            continue
+        return facts, None
+    matcher = load_gitignore_matcher(errors, "go source")
+    found = discover(
+        root,
+        (".go",),
+        errors,
+        label="go source",
+        classification_excluded_dirs=_EXCLUDED_DIR_NAMES,
+        operator_excludes=operator_excludes,
+        gitignore_matcher=matcher,
+        use_gitignore=matcher is not None,
+    )
+    if found.environment_dirs_unignored:
+        # PRV-008 — the CLI keeps one such line per run.
+        errors.append(unignored_environments_line(found.environment_dirs_unignored))
+    _scan_paths(found.for_classification(gitignore), facts, errors)
+    ignored_facts: _Facts | None = None
+    if gitignore is GitignoreMode.UNCERTAIN and found.ignored:
+        ignored_facts = _Facts()
+        _scan_paths(found.ignored, ignored_facts, errors)
+    return facts, ignored_facts
+
+
+def _scan_paths(paths: list[Path], facts: _Facts, errors: list[str]) -> None:
+    for path in paths:
         try:
-            resolved = resolve_and_confine(raw_path, root)
-        except PathEscapeError:
-            errors.append(f"go source: symlink escape blocked: {'/'.join(rel_parts)}")
-            continue
-        try:
-            size = resolved.stat().st_size
-        except OSError:
-            continue
-        if size > MAX_FILE_BYTES:
-            errors.append(f"go source: skipped {resolved.name} — too large")
-            continue
-        try:
-            source_bytes = resolved.read_bytes()
+            source_bytes = path.read_bytes()
         except OSError as exc:
-            errors.append(f"go source: read failed {resolved.name} — {exc}")
+            errors.append(f"go source: read failed {path.name} — {exc}")
             continue
-        _scan_file(source_bytes, facts, errors, resolved.name, rel_parts)
-    return facts
+        _scan_file(source_bytes, facts, errors, path.name)
 
 
 def _scan_file(
@@ -256,7 +310,6 @@ def _scan_file(
     facts: _Facts,
     errors: list[str],
     filename: str,
-    rel_parts: tuple[str, ...],
 ) -> None:
     if _GO_PARSER is None:
         return

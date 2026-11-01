@@ -300,7 +300,7 @@ class TestCallSiteEquivalence:
         facts = go_sa._Facts()
         errors: list[str] = []
         go_sa._scan_file(
-            REAL_WORLD_GO.encode("utf-8"), facts, errors, "main.go", ("main.go",)
+            REAL_WORLD_GO.encode("utf-8"), facts, errors, "main.go"
         )
         assert facts.imports
         assert facts.import_counts == _old_go_counts(REAL_WORLD_GO, facts.imports)

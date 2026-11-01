@@ -1,6 +1,6 @@
 # Plan: Consistent `.gitignore` handling across every analyser, and closing F23
 
-**Status:** Steps 1–6 done (2026-11-01); F23 closed. Python, HTML, CSS, Java/Kotlin and JS/TS are on shared discovery. Steps 7–9 to do. Supersedes
+**Status:** Steps 1–7 done (2026-11-01); F23 closed. Python, HTML, CSS, Java/Kotlin, JS/TS and Go are on shared discovery. Steps 8–9 to do. Supersedes
 workstream 4 of `roadmap-closeout.md`.
 
 ## Context
@@ -486,6 +486,18 @@ IDs are registered in `tests/srtm.py`:
      stale.
 7. **Go.** `_scan_tree`. Keep `vendor/` and `testdata/` excluded from
    classification as today. Test the gitignored-only case.
+
+   **Done (2026-11-01).** `_scan_tree` uses `discover()` and returns the
+   full-weight facts plus, under `uncertain`, a second set from
+   gitignored files that can only lift a SAFE dep to UNCERTAIN. Any
+   import counts, blank and dot imports included. As in JS/TS,
+   gitignored imports add no UNDECLARED entry outside `include`.
+   `vendor/` and `testdata/` never count, gitignored or not. Tests in
+   `tests/unit/test_gitignore_go_classification.py`.
+
+   Back-compat against `4fb3c38`: every `go.mod` fixture, the six step 1
+   samples and scarno's own tree are identical in all three modes. None
+   of the samples contain Go.
 8. **C#.** `_scan_tree`. Test: gitignored `obj/` generated source.
 9. **Docs and records.**
    - README: CLI table and the `.gitignore` section.

@@ -479,7 +479,7 @@ class TestImportCountComplexity:
         errors: list[str] = []
         start = time.monotonic()
         go_sa._scan_file(
-            source.encode("utf-8"), facts, errors, "main.go", ("main.go",)
+            source.encode("utf-8"), facts, errors, "main.go"
         )
         elapsed = time.monotonic() - start
         assert len(facts.import_counts) == n
