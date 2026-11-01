@@ -1,5 +1,5 @@
 """Shared source discovery (FR-279), the gitignore classification mode
-(FR-278) and operator ``--exclude`` (SEC-NEW-76).
+(FR-278) and operator ``--exclude`` (SEC-NEW-79).
 
 ``docs/plans/gitignore-consistent-discovery.md``, step 2. No analyser uses
 the helper yet. These tests pin its contract before steps 3–8 port each
@@ -214,10 +214,10 @@ def test_oversized_files_are_skipped_with_a_path_relative_message(
     assert errors == ["test: skipped big.py — file too large (11 bytes > 10)"]
 
 
-# ── Operator --exclude (SEC-NEW-76) ─────────────────────────────────────────
+# ── Operator --exclude (SEC-NEW-79) ─────────────────────────────────────────
 
 
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 def test_operator_exclude_applies_to_every_set(tmp_path: Path) -> None:
     """A file glob and a directory glob both apply to tracked, ignored and
     rule-only files. A directory match prunes the subtree."""
@@ -238,7 +238,7 @@ def test_operator_exclude_applies_to_every_set(tmp_path: Path) -> None:
     assert found.operator_excluded == 4
 
 
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 @pytest.mark.parametrize(
     ("raw", "message"),
     [
@@ -257,7 +257,7 @@ def test_exclude_globs_validated_like_test_paths(
     assert message in str(exc.value)
 
 
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 def test_exclude_globs_strip_leading_slash() -> None:
     assert sanitise_exclude_globs(("/gen/**", "build")) == ("gen/**", "build")
 
@@ -398,7 +398,7 @@ def _captured_analyser(monkeypatch: pytest.MonkeyPatch) -> list:
 
 
 @pytest.mark.requirement("FR-278")
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 @pytest.mark.parametrize(
     ("argv", "mode", "excludes"),
     [
@@ -423,7 +423,7 @@ def test_cli_sets_mode_and_excludes_on_every_analyser(
 
 
 @pytest.mark.requirement("FR-278")
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 @pytest.mark.parametrize(
     ("argv", "message"),
     [
@@ -446,7 +446,7 @@ def test_cli_rejects_bad_mode_and_globs_with_exit_2(
 
 
 @pytest.mark.requirement("FR-278")
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 def test_options_are_documented_once_every_analyser_honours_them(runner) -> None:
     """Hidden through steps 3–7 of docs/plans/gitignore-consistent-discovery.md
     so --help never documented a flag half the analysers ignored. Every
@@ -472,7 +472,7 @@ def test_unignored_environments_are_counted_separately(tmp_path: Path) -> None:
     assert found.environment_dirs_unignored == 2
 
 
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 @pytest.mark.parametrize(
     ("rel", "patterns", "expected"),
     [

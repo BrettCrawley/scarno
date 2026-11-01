@@ -154,7 +154,7 @@ def test_build_output_never_counts(
     assert deps["axios"].status is _S
 
 
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 def test_operator_exclude_removes_the_evidence(tmp_path: Path) -> None:
     root = _project(tmp_path, "")
     _write(root, "legacy/old.js", 'const a = require("axios");\n')

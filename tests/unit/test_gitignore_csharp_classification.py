@@ -163,7 +163,7 @@ def test_gitignored_usings_add_undeclared_only_under_include(
     assert any(name.startswith("Acme") for name in deps) is undeclared
 
 
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 def test_operator_exclude_removes_the_evidence(tmp_path: Path) -> None:
     root = _project(tmp_path, "")
     _write(root, "Legacy/Old.cs")

@@ -42,7 +42,7 @@ Safety:
     to the project root, capped at ``MAX_FILE_BYTES``, and installed
     environments (virtualenvs, ``node_modules``) pruned by structure.
 
-``.gitignore`` (FR-278 / SEC-NEW-75): the ``TS-CE-012`` rule reads every
+``.gitignore`` (FR-278 / SEC-NEW-78): the ``TS-CE-012`` rule reads every
 template discovery returns, gitignored ones and the by-name excluded
 directories (``dist``, ``vendor`` …) included. Dependency extraction reads
 tracked templates, and gitignored ones according to the
@@ -94,7 +94,7 @@ _TEMPLATE_EXTS: frozenset[str] = frozenset(
 )
 
 # Excluded from dependency extraction only. TS-CE-012 still reads them:
-# a directory name is as easy to hide behind as .gitignore (SEC-NEW-75).
+# a directory name is as easy to hide behind as .gitignore (SEC-NEW-78).
 _EXCLUDED_DIR_NAMES: frozenset[str] = frozenset(
     {"node_modules", ".git", "vendor", "bin", "obj", "dist", "build",
      ".next", ".nuxt", "coverage", "__pycache__"}
@@ -197,7 +197,7 @@ def scan_html_templates(
     """Scan all HTML/template files for JS + CSS dependencies.
 
     *gitignore* and *operator_excludes* come from argv only (FR-278,
-    SEC-NEW-76); *operator_excludes* must already be sanitised.
+    SEC-NEW-79); *operator_excludes* must already be sanitised.
 
     Never raises. Returns structured results that callers (JS analyser,
     CSS analyser, polyglot orchestrator) merge into their dep lists.

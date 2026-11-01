@@ -28,7 +28,7 @@ class BaseAnalyser(ABC):
     # orchestrator from ``--gitignore`` / ``--no-gitignore`` (argv only).
     # The security rules ignore it: they always scan gitignored files.
     gitignore: GitignoreMode = GitignoreMode.UNCERTAIN
-    # SEC-NEW-76 — operator ``--exclude`` globs, already validated by
+    # SEC-NEW-79 — operator ``--exclude`` globs, already validated by
     # ``scarno.core.discovery.sanitise_exclude_globs``. Argv only; never
     # read from the analysed tree.
     operator_excludes: tuple[str, ...] = ()

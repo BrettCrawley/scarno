@@ -100,7 +100,7 @@ def sanitise_test_paths(
     """Validate operator-supplied ``--test-paths`` globs.
 
     ``flag`` names the option in error messages, so ``--exclude`` (which
-    shares this contract, SEC-NEW-76) reports its own name.
+    shares this contract, SEC-NEW-79) reports its own name.
 
     Raises:
       ValueError: when the input violates SEC-NEW-31 / SEC-NEW-33.

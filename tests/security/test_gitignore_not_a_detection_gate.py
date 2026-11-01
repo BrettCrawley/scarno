@@ -1,5 +1,5 @@
 """F23: the analysed repository's ``.gitignore`` must not hide code from the
-security rules (SEC-NEW-75, PRV-008).
+security rules (SEC-NEW-78, PRV-008).
 
 Claude Security finding F23 (scan of ``a4cc442``): a pull request adds
 ``evil.py`` with a CRITICAL payload, lists it in its own ``.gitignore``
@@ -49,7 +49,7 @@ def _rule_hits(report: dict, rule_id: str) -> list[dict]:
     return [f for f in report["findings"] if f["rule_id"] == rule_id]
 
 
-@pytest.mark.requirement("SEC-NEW-75")
+@pytest.mark.requirement("SEC-NEW-78")
 @pytest.mark.parametrize("mode", ["uncertain", "include", "exclude"])
 def test_gitignored_payload_is_found_and_gates_the_build(
     runner, tmp_path: Path, mode: str
@@ -67,7 +67,7 @@ def test_gitignored_payload_is_found_and_gates_the_build(
     assert code == 3
 
 
-@pytest.mark.requirement("SEC-NEW-75")
+@pytest.mark.requirement("SEC-NEW-78")
 @pytest.mark.requirement("PRV-008")
 def test_findings_from_ignored_files_are_counted_without_paths(
     runner, tmp_path: Path
@@ -87,7 +87,7 @@ def test_findings_from_ignored_files_are_counted_without_paths(
     assert "evil_payload" not in line and "gen" not in line
 
 
-@pytest.mark.requirement("SEC-NEW-75")
+@pytest.mark.requirement("SEC-NEW-78")
 def test_gitignored_notebook_magic_is_found(runner, tmp_path: Path) -> None:
     """Notebooks never honoured .gitignore for their magics. That stays
     true now that notebook classification does."""
@@ -108,7 +108,7 @@ def test_gitignored_notebook_magic_is_found(runner, tmp_path: Path) -> None:
     assert gitignored_findings_line(1) in report["errors"]
 
 
-@pytest.mark.requirement("SEC-NEW-75")
+@pytest.mark.requirement("SEC-NEW-78")
 @pytest.mark.parametrize("dirname", ["build", "dist", ".tox", "venv"])
 def test_by_name_classification_exclusions_do_not_hide_code_from_rules(
     runner, tmp_path: Path, dirname: str
@@ -129,7 +129,7 @@ def test_by_name_classification_exclusions_do_not_hide_code_from_rules(
     assert code == 3
 
 
-@pytest.mark.requirement("SEC-NEW-75")
+@pytest.mark.requirement("SEC-NEW-78")
 @pytest.mark.parametrize("env_name", ["env", ".direnv/python-3.12", ".venv"])
 def test_installed_environment_is_not_rule_scanned(
     runner, tmp_path: Path, env_name: str
@@ -155,7 +155,7 @@ def test_installed_environment_is_not_rule_scanned(
     assert not any("installed-environment" in e for e in report["errors"])
 
 
-@pytest.mark.requirement("SEC-NEW-75")
+@pytest.mark.requirement("SEC-NEW-78")
 @pytest.mark.requirement("PRV-008")
 def test_environment_not_covered_by_gitignore_is_surfaced(
     runner, tmp_path: Path
@@ -179,7 +179,7 @@ def test_environment_not_covered_by_gitignore_is_surfaced(
     )
 
 
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 def test_analysed_tree_cannot_configure_its_own_exclusions(
     runner, tmp_path: Path
 ) -> None:
@@ -201,7 +201,7 @@ def test_analysed_tree_cannot_configure_its_own_exclusions(
     assert code == 3
 
 
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 def test_operator_exclude_narrows_rules_and_shell_scans(
     runner, tmp_path: Path
 ) -> None:

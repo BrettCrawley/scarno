@@ -139,7 +139,7 @@ def test_vendor_and_testdata_never_count(
     assert deps[PROTO].status is _S
 
 
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 def test_operator_exclude_removes_the_evidence(tmp_path: Path) -> None:
     root = _project(tmp_path, "")
     _write(root, "legacy/old.go")

@@ -40,7 +40,7 @@ Two kinds of tree are never returned, for any consumer:
   visible in a pull request's diff, so planting one to hide code is
   reviewable. That is the documented residual risk.
 * **Operator ``--exclude`` globs.** These are set from argv only, never
-  from the analysed tree (SEC-NEW-76).
+  from the analysed tree (SEC-NEW-79).
 
 ``.git`` is never entered. Symlinked directories are never entered, which
 matches ``Path.rglob`` on every supported Python. Symlinked files are
@@ -155,7 +155,7 @@ def consolidate_audit_lines(errors: list[str]) -> list[str]:
 
 
 def sanitise_exclude_globs(raw: tuple[str, ...]) -> tuple[str, ...]:
-    """Validate operator ``--exclude`` globs (SEC-NEW-76).
+    """Validate operator ``--exclude`` globs (SEC-NEW-79).
 
     Same contract as ``--test-paths``: a count cap and a byte cap, POSIX
     ``/`` only, no ``..`` segments, and a leading ``/`` stripped.

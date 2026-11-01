@@ -46,7 +46,7 @@ def _paths(report: dict, rule_id: str) -> list[str]:
     return sorted(f["file_path"] for f in report["findings"] if f["rule_id"] == rule_id)
 
 
-@pytest.mark.requirement("SEC-NEW-75")
+@pytest.mark.requirement("SEC-NEW-78")
 @pytest.mark.parametrize("mode", ["uncertain", "include", "exclude"])
 def test_gitignored_template_and_stylesheet_are_rule_scanned(
     runner, tmp_path: Path, mode: str
@@ -63,7 +63,7 @@ def test_gitignored_template_and_stylesheet_are_rule_scanned(
     assert _paths(report, "TS-CE-007") == ["gen/theme.css"]
 
 
-@pytest.mark.requirement("SEC-NEW-75")
+@pytest.mark.requirement("SEC-NEW-78")
 @pytest.mark.parametrize("dirname", ["dist", "build", "vendor", "bin"])
 def test_by_name_excluded_directories_are_rule_scanned(
     runner, tmp_path: Path, dirname: str
@@ -82,7 +82,7 @@ def test_by_name_excluded_directories_are_rule_scanned(
         assert _paths(report, "TS-CE-007") == [f"{dirname}/theme.css"]
 
 
-@pytest.mark.requirement("SEC-NEW-75")
+@pytest.mark.requirement("SEC-NEW-78")
 def test_installed_environment_templates_are_not_scanned(
     runner, tmp_path: Path
 ) -> None:
@@ -104,7 +104,7 @@ def test_installed_environment_templates_are_not_scanned(
     assert not any("installed-environment" in e for e in report["errors"])
 
 
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 def test_operator_exclude_narrows_html_and_css(runner, tmp_path: Path) -> None:
     root = _project(tmp_path)
     (root / "legacy").mkdir()

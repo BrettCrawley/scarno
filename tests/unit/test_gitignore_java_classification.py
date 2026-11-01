@@ -164,7 +164,7 @@ def test_only_gitignored_sources_is_not_called_safe(tmp_path: Path) -> None:
     assert dep.status is _U
 
 
-@pytest.mark.requirement("SEC-NEW-76")
+@pytest.mark.requirement("SEC-NEW-79")
 def test_operator_exclude_removes_the_evidence(tmp_path: Path) -> None:
     root = _project(tmp_path, "gen/\n")
     _write(root, "gen/com/example/Client.java")

@@ -116,8 +116,8 @@ SECURITY_REQUIREMENTS: frozenset[str] = frozenset(
         "SEC-NEW-72",  # --allow-remote-fetch is argv-only (mirrors SEC-NEW-56)
         "SEC-NEW-73",  # Decompression-bomb caps when reading fetched JARs
         "SEC-NEW-74",  # --integrity-cross-check retries once after jittered backoff before declaring mismatch
-        "SEC-NEW-75",  # security rules never honour .gitignore or by-name exclusions; installed environments pruned by structure (F23)
-        "SEC-NEW-76",  # operator --exclude globs: argv only, validated like --test-paths, applied to every set incl. rules
+        "SEC-NEW-78",  # security rules never honour .gitignore or by-name exclusions; installed environments pruned by structure (F23)
+        "SEC-NEW-79",  # operator --exclude globs: argv only, validated like --test-paths, applied to every set incl. rules
     }
 )
 

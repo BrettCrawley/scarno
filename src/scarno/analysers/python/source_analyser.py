@@ -887,7 +887,7 @@ def analyse_source_files_with_findings(
     ``gitignore`` (FR-278) selects how classification treats gitignored
     files. When it is ``None`` it is derived from the legacy
     ``use_gitignore`` (False means INCLUDE). The security rules ignore it:
-    gitignored files are always rule-scanned (SEC-NEW-75, F23).
+    gitignored files are always rule-scanned (SEC-NEW-78, F23).
     """
     mode = gitignore if gitignore is not None else (
         GitignoreMode.UNCERTAIN if use_gitignore else GitignoreMode.INCLUDE
@@ -963,7 +963,7 @@ def analyse_source_files_with_findings(
             continue
         visitor, source_text, tree = parsed
 
-        # REQ-3c / SEC-NEW-75 — the rules see every file, gitignored and
+        # REQ-3c / SEC-NEW-78 — the rules see every file, gitignored and
         # by-name-excluded ones included, so a repository cannot hide a
         # payload from them by listing it in its own .gitignore (F23).
         try:
@@ -1276,7 +1276,7 @@ def _collect_notebook_findings(
 ) -> list[Finding]:
     """Return REQ-3c findings for ``!pip install`` / ``%pip install`` magics
     in ``notebooks``. Those are every notebook the rules must see,
-    gitignored ones included (SEC-NEW-75)."""
+    gitignored ones included (SEC-NEW-78)."""
     from scarno.findings.engine import scan_notebook_magics
 
     out: list[Finding] = []
@@ -1300,7 +1300,7 @@ def _collect_shell_findings(
     """Return REQ-3c findings for Dockerfile / workflow ``curl | sh`` lines.
 
     These candidates never honoured ``.gitignore``, and still don't. They
-    do honour the operator's ``--exclude`` globs (SEC-NEW-76)."""
+    do honour the operator's ``--exclude`` globs (SEC-NEW-79)."""
     from scarno.findings.engine import scan_shell_script_for_curl_pipe
 
     out: list[Finding] = []

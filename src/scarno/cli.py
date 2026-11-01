@@ -119,7 +119,7 @@ class _RunOptions:
     language_filter: tuple[str, ...] = ()
     # FR-278 — how classification treats gitignored files. argv only.
     gitignore: GitignoreMode = GitignoreMode.UNCERTAIN
-    # SEC-NEW-76 — operator --exclude globs (already sanitised). argv only.
+    # SEC-NEW-79 — operator --exclude globs (already sanitised). argv only.
     operator_excludes: tuple[str, ...] = ()
     # REQ-17 — drop test-scoped deps and skip test source files.
     exclude_tests: bool = False
@@ -976,7 +976,7 @@ def main(
             "classification. Same as --gitignore include."
         ),
     ),
-    # FR-278 / SEC-NEW-76 — every analyser's source walk honours these
+    # FR-278 / SEC-NEW-79 — every analyser's source walk honours these
     # (docs/plans/gitignore-consistent-discovery.md, steps 3–8). Argv only:
     # never read from the analysed tree.
     gitignore: str | None = typer.Option(
@@ -1209,7 +1209,7 @@ def main(
             raise typer.Exit(code=2)
         gitignore_mode = GitignoreMode.INCLUDE
 
-    # SEC-NEW-76 — sanitise --exclude exactly like --test-paths.
+    # SEC-NEW-79 — sanitise --exclude exactly like --test-paths.
     try:
         operator_excludes = sanitise_exclude_globs(tuple(exclude or ()))
     except ValueError as exc:

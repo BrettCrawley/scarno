@@ -22,7 +22,7 @@ remote-URL ``@import`` and ``file://`` ``url()`` patterns.
 "find unused packages"; CSS support narrows that to stylesheet deps
 that come through npm (`~package/...` / bare-specifier `@import`).
 
-``.gitignore`` (FR-278 / SEC-NEW-75): the ``TS-CE-007`` / ``TS-CE-008``
+``.gitignore`` (FR-278 / SEC-NEW-78): the ``TS-CE-007`` / ``TS-CE-008``
 rules read every stylesheet :func:`scarno.core.discovery.discover`
 returns, gitignored ones and ``dist`` / ``build`` included. Dependency
 extraction reads tracked stylesheets, and gitignored ones according to
