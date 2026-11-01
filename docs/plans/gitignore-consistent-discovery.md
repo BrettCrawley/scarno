@@ -1,6 +1,6 @@
 # Plan: Consistent `.gitignore` handling across every analyser, and closing F23
 
-**Status:** Steps 1–7 done (2026-11-01); F23 closed. Python, HTML, CSS, Java/Kotlin, JS/TS and Go are on shared discovery. Steps 8–9 to do. Supersedes
+**Status:** Steps 1–8 done (2026-11-01); F23 closed. Every analyser is on shared discovery, and `--gitignore` / `--exclude` are visible in `--help`. Step 9 (docs) to do. Supersedes
 workstream 4 of `roadmap-closeout.md`.
 
 ## Context
@@ -499,6 +499,33 @@ IDs are registered in `tests/srtm.py`:
    samples and scarno's own tree are identical in all three modes. None
    of the samples contain Go.
 8. **C#.** `_scan_tree`. Test: gitignored `obj/` generated source.
+
+   **Done (2026-11-01).** `_scan_tree` uses one `discover()` walk for
+   `.cs` and `.cshtml` and returns full-weight facts plus ignored-only
+   facts, as in steps 6 and 7. `--gitignore` and `--exclude` are no
+   longer hidden. Tests in
+   `tests/unit/test_gitignore_csharp_classification.py`; the step 3
+   test that pinned the options hidden now pins them documented.
+
+   Back-compat against `fa38508`: every C# fixture (9), the six step 1
+   samples and scarno's own tree are identical in all three modes.
+
+   Decisions:
+   - **Gitignored sources under `bin/` and `obj/` are ignored-only
+     evidence outside `exclude`,** as Java's `target/` in step 5. `obj/`
+     holds source-generator output and `GlobalUsings.g.cs`, which the SDK
+     writes from `<Using Include>` items in the project file. That is
+     real usage. A committed `obj/` still does not count.
+   - **Fixed `global::` in using directives (FR-128).** The extractor
+     dropped `global using global::Serilog;` (the `GlobalUsings.g.cs`
+     form) and turned `using global::Serilog.Core;` into `Core`. That was
+     a false SAFE in tracked files too, so it is a classification fix in
+     its own right, not only a step 8 one.
+   - **`--exclude` help now says what it covers:** every source walk and
+     every rule scan. Files that declare dependencies (requirements,
+     `pom.xml`, `package.json`, `.csproj`, Dockerfile installs) are still
+     read, as the design above scoped it ("narrows both passes"). The
+     old hidden help said "every analyser's scan", which overclaimed.
 9. **Docs and records.**
    - README: CLI table and the `.gitignore` section.
    - `docs/LIMITATIONS.md`: structural detection residual, and

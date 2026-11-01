@@ -976,10 +976,9 @@ def main(
             "classification. Same as --gitignore include."
         ),
     ),
-    # FR-278 / SEC-NEW-76 — hidden until every analyser honours them
-    # (docs/plans/gitignore-consistent-discovery.md, step 8). Python does
-    # from step 3; advertising them earlier would document flags that most
-    # analysers still ignore.
+    # FR-278 / SEC-NEW-76 — every analyser's source walk honours these
+    # (docs/plans/gitignore-consistent-discovery.md, steps 3–8). Argv only:
+    # never read from the analysed tree.
     gitignore: str | None = typer.Option(
         None,
         "--gitignore",
@@ -990,19 +989,19 @@ def main(
             "always scan gitignored files."
         ),
         case_sensitive=False,
-        hidden=True,
     ),
     exclude: list[str] | None = typer.Option(
         None,
         "--exclude",
         help=(
-            "Glob (relative to project root) removed from every analyser's "
-            "scan, rules included. Repeatable. A pattern matching a "
-            "directory excludes everything under it. fnmatch semantics, as "
-            "--test-paths: '*' also matches '/'. Max 64 patterns × 256 "
-            "bytes; no '..' segments; POSIX '/' only."
+            "Glob (relative to project root) removed from every source "
+            "scan, security rules included. Repeatable. A pattern matching "
+            "a directory excludes everything under it. Files that declare "
+            "dependencies (requirements, pom.xml, package.json, .csproj …) "
+            "are still read. fnmatch semantics, as --test-paths: '*' also "
+            "matches '/'. Max 64 patterns × 256 bytes; no '..' segments; "
+            "POSIX '/' only."
         ),
-        hidden=True,
     ),
     sarif_path_prefix: str | None = typer.Option(
         None,

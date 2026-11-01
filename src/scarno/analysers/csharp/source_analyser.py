@@ -29,11 +29,18 @@ Safety:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
 from scarno.analysers.name_counts import MAX_FULL_SCANS, count_boundary_refs
+from scarno.core.discovery import (
+    GITIGNORED_ONLY_REASON,
+    GitignoreMode,
+    discover,
+    load_gitignore_matcher,
+    unignored_environments_line,
+)
 from scarno.models import Dependency, DependencyStatus, EntryPoint
 from scarno.security import MAX_FILE_BYTES, PathEscapeError, resolve_and_confine
 
@@ -105,9 +112,18 @@ _CS_SIMPLE_NAME = re.compile(r"^[A-Za-z_@][A-Za-z0-9_]*$")
 
 
 def analyse_csharp_sources(
-    project_path: str, dependencies: list[Dependency]
+    project_path: str,
+    dependencies: list[Dependency],
+    *,
+    gitignore: GitignoreMode = GitignoreMode.UNCERTAIN,
+    operator_excludes: tuple[str, ...] = (),
 ) -> tuple[list[Dependency], list[str]]:
-    """Classify each NuGet dep as IN_USE / SAFE / UNDECLARED."""
+    """Classify each NuGet dep as IN_USE / UNCERTAIN / SAFE / UNDECLARED.
+
+    ``gitignore`` decides how gitignored sources count (FR-278). Outside
+    ``INCLUDE`` they are read apart and can only lift a SAFE dep to
+    UNCERTAIN; they never add an UNDECLARED entry.
+    """
     errors: list[str] = []
     root = Path(project_path)
     try:
@@ -118,7 +134,9 @@ def analyse_csharp_sources(
     if not root.is_dir():
         return list(dependencies), errors
 
-    facts = _scan_tree(root, errors)
+    facts, ignored_facts = _scan_tree(
+        root, errors, gitignore=gitignore, operator_excludes=operator_excludes,
+    )
 
     declared = {dep.name for dep in dependencies if dep.ecosystem == "nuget"}
     matched: set[str] = set()
@@ -131,6 +149,22 @@ def analyse_csharp_sources(
         status, reason = _classify(dep.name, facts)
         if status is DependencyStatus.IN_USE:
             matched.add(dep.name)
+        # FR-278 — a dep still SAFE that only gitignored files use is
+        # UNCERTAIN, not SAFE. The reason is a fixed literal and names no
+        # file (PRV-008).
+        if (
+            status is DependencyStatus.SAFE
+            and ignored_facts is not None
+            and _classify(dep.name, ignored_facts)[0] is not DependencyStatus.SAFE
+        ):
+            updated.append(
+                replace(
+                    dep,
+                    status=DependencyStatus.UNCERTAIN,
+                    reason=GITIGNORED_ONLY_REASON,
+                )
+            )
+            continue
         # REQ-17 / FR-150 — synthesise entry points from the using
         # directives that resolved to this package, so the report shows
         # which namespaces / types the project actually consumes.
@@ -167,25 +201,64 @@ def analyse_csharp_sources(
 # ── Tree scanning ──────────────────────────────────────────────────────────
 
 
-def _scan_tree(root: Path, errors: list[str]) -> _Facts:
+def _scan_tree(
+    root: Path,
+    errors: list[str],
+    *,
+    gitignore: GitignoreMode = GitignoreMode.UNCERTAIN,
+    operator_excludes: tuple[str, ...] = (),
+) -> tuple[_Facts, _Facts | None]:
+    """Return ``(facts, ignored_facts)``.
+
+    ``facts`` comes from the files that count with full weight under
+    ``gitignore``. ``ignored_facts`` comes from gitignored files that can
+    only lift a SAFE dep to UNCERTAIN, and is ``None`` under ``EXCLUDE`` or
+    when there are none.
+
+    ``bin/`` and ``obj/`` never count with full weight, as before. A
+    gitignored source file under one is generated: source-generator
+    output, and the ``GlobalUsings.g.cs`` the SDK writes from the
+    project's ``<Using Include>`` items. Outside ``EXCLUDE`` it is
+    ignored-only evidence, so even ``INCLUDE`` gives UNCERTAIN there.
+    """
     facts = _Facts()
+    matcher = load_gitignore_matcher(errors, "csharp source")
+    found = discover(
+        root,
+        (".cs", ".cshtml"),
+        errors,
+        label="csharp source",
+        classification_excluded_dirs=_EXCLUDED_DIR_NAMES,
+        operator_excludes=operator_excludes,
+        gitignore_matcher=matcher,
+        use_gitignore=matcher is not None,
+    )
+    if found.environment_dirs_unignored:
+        # PRV-008 — the CLI keeps one such line per run.
+        errors.append(unignored_environments_line(found.environment_dirs_unignored))
+    _scan_paths(found.for_classification(gitignore), root, facts, errors)
 
-    # .cs files via tree-sitter
-    if CSHARP_AST_AVAILABLE:
-        for raw_path in root.rglob("*.cs"):
-            rel_parts = raw_path.relative_to(root).parts
-            if any(p in _EXCLUDED_DIR_NAMES for p in rel_parts):
-                continue
-            _scan_cs_file(raw_path, root, facts, errors)
+    ignored_paths: list[Path] = []
+    if gitignore is not GitignoreMode.EXCLUDE:
+        if gitignore is GitignoreMode.UNCERTAIN:
+            ignored_paths.extend(found.ignored)
+        if matcher is not None:
+            ignored_paths.extend(p for p in found.rule_only if matcher(str(p)))
+    ignored_facts: _Facts | None = None
+    if ignored_paths:
+        ignored_facts = _Facts()
+        _scan_paths(sorted(ignored_paths), root, ignored_facts, errors)
+    return facts, ignored_facts
 
-    # .cshtml files via regex
-    for raw_path in root.rglob("*.cshtml"):
-        rel_parts = raw_path.relative_to(root).parts
-        if any(p in _EXCLUDED_DIR_NAMES for p in rel_parts):
-            continue
-        _scan_razor_file(raw_path, root, facts, errors)
 
-    return facts
+def _scan_paths(
+    paths: list[Path], root: Path, facts: _Facts, errors: list[str]
+) -> None:
+    for path in paths:
+        if path.suffix.lower() == ".cshtml":
+            _scan_razor_file(path, root, facts, errors)
+        elif CSHARP_AST_AVAILABLE:
+            _scan_cs_file(path, root, facts, errors)
 
 
 def _scan_cs_file(
@@ -440,6 +513,8 @@ def _extract_using(node, facts: _Facts) -> None:  # type: ignore[no-untyped-def]
       * ``using System.Collections.Generic;`` → "System.Collections.Generic"
       * ``using static Newtonsoft.Json.JsonConvert;`` → "Newtonsoft.Json.JsonConvert"
       * ``using Json = Newtonsoft.Json;`` → "Newtonsoft.Json" (RHS of alias)
+      * ``global using global::Serilog;`` → "Serilog". The SDK writes this
+        form into ``obj/…/GlobalUsings.g.cs`` from ``<Using Include>``.
     """
     has_equals = any(c.type == "=" for c in node.children)
     has_static = any(c.type == "static" for c in node.children)
@@ -451,7 +526,7 @@ def _extract_using(node, facts: _Facts) -> None:  # type: ignore[no-untyped-def]
             if child.type == "=":
                 found_equals = True
                 continue
-            if found_equals and child.type in {"qualified_name", "identifier"}:
+            if found_equals and child.type in _NAME_NODE_TYPES:
                 ns = _flatten_name(child)
                 if ns:
                     facts.namespaces.add(ns)
@@ -459,24 +534,35 @@ def _extract_using(node, facts: _Facts) -> None:  # type: ignore[no-untyped-def]
     else:
         # Regular or static using — take the qualified_name or identifier
         for child in node.children:
-            if child.type in {"qualified_name", "identifier"}:
+            if child.type in _NAME_NODE_TYPES:
                 ns = _flatten_name(child)
                 if ns:
                     facts.namespaces.add(ns)
                 return
 
 
+_NAME_NODE_TYPES = frozenset({"qualified_name", "identifier", "alias_qualified_name"})
+
+
 def _flatten_name(node) -> str:  # type: ignore[no-untyped-def]
-    """Flatten a ``qualified_name`` or ``identifier`` into a dotted string."""
+    """Flatten a ``qualified_name`` or ``identifier`` into a dotted string.
+
+    An ``alias::Name`` qualifier contributes only ``Name``: ``global::`` is
+    the root namespace, and an ``extern alias`` names an assembly, not a
+    namespace segment.
+    """
     if node.type == "identifier":
         text = node.text
         if text is None:
             return ""
         return text.decode("utf-8", errors="replace") if isinstance(text, bytes) else text
+    if node.type == "alias_qualified_name":
+        name = node.child_by_field_name("name")
+        return _flatten_name(name) if name is not None else ""
     if node.type == "qualified_name":
         parts: list[str] = []
         for child in node.children:
-            if child.type in {"identifier", "qualified_name"}:
+            if child.type in _NAME_NODE_TYPES:
                 parts.append(_flatten_name(child))
         return ".".join(p for p in parts if p)
     return ""

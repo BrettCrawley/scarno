@@ -48,7 +48,11 @@ class CsharpAnalyser(BaseAnalyser):
     def analyse(self, project_path: str) -> AnalysisResult:
         root = Path(project_path).resolve(strict=False)
         deps, parse_errors, findings = parse_all_csharp_dependency_files(str(root))
-        deps, source_errors = analyse_csharp_sources(str(root), deps)
+        deps, source_errors = analyse_csharp_sources(
+            str(root), deps,
+            gitignore=self.gitignore,
+            operator_excludes=self.operator_excludes,
+        )
         return AnalysisResult(
             project_type="csharp",
             project_path=str(root),

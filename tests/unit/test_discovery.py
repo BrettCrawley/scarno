@@ -445,17 +445,18 @@ def test_cli_rejects_bad_mode_and_globs_with_exit_2(
     assert seen == [], "no analyser may run on a usage error"
 
 
+@pytest.mark.requirement("FR-278")
 @pytest.mark.requirement("SEC-NEW-76")
-def test_new_options_stay_hidden_until_analysers_honour_them(runner) -> None:
-    """The options are parsed and passed to every analyser, but only some
-    analysers honour them so far. They become visible in step 8 of
-    docs/plans/gitignore-consistent-discovery.md, once every analyser does,
-    so --help never documents a flag that half the analysers ignore."""
+def test_options_are_documented_once_every_analyser_honours_them(runner) -> None:
+    """Hidden through steps 3–7 of docs/plans/gitignore-consistent-discovery.md
+    so --help never documented a flag half the analysers ignored. Every
+    analyser's source walk honours both from step 8."""
     from scarno.cli import app
 
     out = runner.invoke(app, ["--help"], env={"COLUMNS": "200"}).output
-    assert "--gitignore " not in out.replace("--gitignore include", "")
-    assert "--exclude " not in out.replace("--exclude-", "")
+    assert "--gitignore " in out.replace("--gitignore include", "")
+    assert "--exclude " in out.replace("--exclude-", "")
+    assert "are still read" in out, "--exclude must say manifests are unaffected"
 
 
 @pytest.mark.requirement("FR-279")
