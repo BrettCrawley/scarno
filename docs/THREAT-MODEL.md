@@ -1957,3 +1957,55 @@ public-only indexes.
   NOT defended".
 - **All other amendment threats (T-45, T-47, T-48)** are closed by
   design or accepted residual with explicit operator opt-in.
+
+---
+
+## §9.13 — Consistent `.gitignore` discovery (closes Claude Security F23)
+
+Date: 2026-11-01. Plan: `docs/plans/gitignore-consistent-discovery.md`.
+
+### §9.13.1 What F23 was
+
+Claude Security's scan of `a4cc442` (F23, LOW) found that the analysed
+repository's own `.gitignore`, attacker-authored in the pull-request
+scenario, removed files from the security rule engine. A PR could add
+`evil.py` with a `TS-CE-001` payload, list it in `.gitignore`, commit it
+with `git add -f`, and pass the `--fail-on-severity` gate unseen. Only
+Python discovery applied `.gitignore`. Every other analyser dropped the
+setting, but several skipped directories by name (`dist`, `build`,
+`vendor` …), which is the same blind spot in another form.
+
+### §9.13.2 Threats registered
+
+| ID | Threat | Severity | Likelihood | Mitigation | Status |
+|---|---|---|---|---|---|
+| **T-49** | A PR hides a payload from the security rules by gitignoring it (F23). | Medium | Medium | SEC-NEW-78 — the rules never honour `.gitignore`. Every analyser walks the tree through `core/discovery.discover()`, and every rule pass reads `DiscoveredFiles.for_rules()` (tracked, ignored and by-name-excluded files). Tests: `tests/security/test_gitignore_not_a_detection_gate.py`, `tests/security/test_gitignore_html_css_rules.py`. | **Closed** (`5b28fae` Python, `579fd09` HTML/CSS) |
+| **T-50** | A PR hides a payload in a directory an analyser skips by name (`build/`, `dist/`, `vendor/`, `bin/`). | Medium | Medium | SEC-NEW-78 — by-name lists apply to classification only. The rules prune installed environments by structure instead. | **Closed** (same commits) |
+| **T-51** | A PR plants a `pyvenv.cfg` (or names a directory `site-packages` / `node_modules`) so the rules treat it as an installed environment and skip it. | Medium | Low | Partial — visible in review. An environment the tree's own `.gitignore` does not cover is counted in a fixed warning line (PRV-008), which is what a planted marker looks like. Pruning by kind, never by count: any cap on how many ignored files are scanned would itself be a bypass. `--exclude` is the operator's lever for real noise. | **Open — accepted residual** (LIMITATIONS.md) |
+| **T-52** | The analysed tree configures its own policing: sets the classification mode or exclusion globs from a file it controls. | Medium | Medium | SEC-NEW-79 — `--gitignore` and `--exclude` are argv only, never read from `pyproject.toml`, `scarno.json` or the environment (F15 precedent). `--exclude` is validated like `--test-paths` (count and byte caps, no `..`, POSIX `/` only). | **Closed by design** |
+| **T-53** | Honouring `.gitignore` for classification pushes generated-code dependencies to a false `SAFE`; removing them breaks the build. | Low | High | FR-278 — default `--gitignore uncertain`: usage only in gitignored files gives `UNCERTAIN` with a fixed reason. Exit 1 can only become less frequent. | **Closed** (steps 3–8) |
+| **T-54** | Audit lines leak paths from the analysed tree into reports. | Low | Low | PRV-008 — the reason and both warning lines are fixed literals plus an integer. | **Closed by design** |
+
+### §9.13.3 Controls
+
+| ID | Control | Implements |
+|---|---|---|
+| **SEC-NEW-78** | Security rules scan every discovered file, gitignored and by-name-excluded included; installed environments pruned by structure (`pyvenv.cfg`, `site-packages`, `dist-packages`, `__pypackages__`, `node_modules`). | T-49, T-50 |
+| **SEC-NEW-79** | Operator `--exclude` globs: argv only, validated, applied to every source walk and rule scan. Manifests are still read. | T-51 (operator lever), T-52 |
+| **FR-278** | `--gitignore uncertain \| include \| exclude` classification mode, argv only; `--no-gitignore` = `include`. | T-52, T-53 |
+| **PRV-008** | Fixed-literal reason and audit lines; the CLI reports one line of each kind per run. | T-51, T-54 |
+
+SEC-NEW-78 and SEC-NEW-79 were first registered as SEC-NEW-75 and
+SEC-NEW-76, which §9.12.7 already uses for REQ-24 controls. They were
+renumbered on 2026-11-01; the REQ-24 IDs are unchanged.
+
+### §9.13.4 Behaviour change
+
+Exit 3 can become more frequent: findings in gitignored files and in
+committed `build/`, `dist/`, `target/` and `vendor/` trees now gate the
+run. Step 1 measured 0 added findings in committed by-name trees across
+the samples. On the six real-world samples, steps 3–8 changed only
+this: 7 `TS-CE-012` findings and some CSS dependencies, all from
+third-party files inside virtualenvs, disappeared, and the
+unignored-environment line appeared on two samples whose `.venv` their
+own `.gitignore` does not cover.

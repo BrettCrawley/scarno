@@ -86,8 +86,9 @@ For each detected ecosystem Scarno runs a three-stage pipeline:
    the ecosystem's manifest and lock files (see the table below), including
    transitive edges where the lockfile exposes them. This builds the set of
    *declared* dependencies and a dependency graph.
-2. **Source analysis** — source files are discovered (respecting `.gitignore` by
-   default) and parsed into ASTs via `tree-sitter` (or Python's `ast`). Imports,
+2. **Source analysis** — source files are discovered (installed environments
+   such as virtualenvs and `node_modules` are skipped; gitignored files are
+   read, see [Gitignored files](#gitignored-files)) and parsed into ASTs via `tree-sitter` (or Python's `ast`). Imports,
    annotations, reflective calls, blank/dot imports, Razor `@using`, ESM/CJS/
    dynamic imports, and per-symbol usage are extracted.
 3. **Classification & findings** — declared dependencies are matched against
@@ -190,7 +191,9 @@ recognised manifest file.
 | `--native-tls` | flag | off | **REQ-24** — use the OS-native trust store (`truststore` package; same approach as `uv` / `pip` / `hatch`) so corporate CAs deployed to the macOS Keychain / Windows cert store / Linux NSS are trusted automatically. Cert verification + hostname check remain mandatory; only the trust roots change. Argv-only. Requires `--allow-remote-fetch`. |
 | `--integrity-cross-check` | flag | off | **REQ-24** — when ≥2 indexes are configured for an ecosystem, fetch each artefact from the top-2 and compare bytes; persistent mismatch (after a retry) → `TS-INTEGRITY-MISMATCH` (HIGH) finding. Doubles fetch volume per artefact. Requires `--allow-remote-fetch`. |
 | `--fail-on-remote-severity` | flag | off | **REQ-24** — let `provenance="remote"` findings escalate exit code `3` via `--fail-on-severity`. Off by default: remote findings are visible (with a top-of-report banner) but advisory, because the bytes the analyser saw were network-fetched and may be attacker-influenceable. Requires `--allow-remote-fetch`. |
-| `--no-gitignore` | flag | off | Disable `.gitignore` filtering during source-file discovery (analyse ignored files too). |
+| `--gitignore` | `uncertain` \| `include` \| `exclude` | `uncertain` | How dependency classification treats gitignored files. `uncertain`: a dependency used only there is `UNCERTAIN`, never `SAFE`. `include`: they count like any other file. `exclude`: they are not counted. The security rules always scan gitignored files, whatever the mode. Argv only. See [Gitignored files](#gitignored-files). |
+| `--no-gitignore` | flag | off | Same as `--gitignore include`. |
+| `--exclude` | glob | — | Remove a path from every source scan, security rules included, e.g. a noisy committed tree. Repeatable. A pattern matching a directory excludes everything under it. Files that declare dependencies (requirements, `pom.xml`, `package.json`, `.csproj` …) are still read. fnmatch semantics on the root-relative path (`*` also matches `/`). Max 64 patterns × 256 bytes; no `..` segments; POSIX `/` only. Argv only. |
 | `--show-suppressed` | flag | off | Include suppressed findings in the report, marked `suppressed=true`. |
 | `--sarif-path-prefix` | path | — | **SARIF only.** The analysed directory's path relative to the repository root, prepended to every file path in the report. GitHub Code Scanning reads SARIF paths as relative to the repository root, so set this when analysing a subdirectory and uploading the report yourself: `scarno services/api --format sarif --sarif-path-prefix services/api`. Relative paths only; no `..` segments. The GitHub Action sets it for you. |
 | `--fail-on-suppressed-severity` | flag | off | Let **suppressed** findings escalate exit code `3` via `--fail-on-severity`. Off by default, because suppression is how you silence a finding in your *own* repository. Turn it on when scanning a tree you do not control — both suppression routes are files in that tree, so whoever wrote the code also chose what the gate ignores. |
@@ -524,8 +527,11 @@ scarno . --format sarif --output scarno.sarif --fail-on-severity MEDIUM
 # Audit including normally-suppressed findings
 scarno . --show-suppressed --format json --output audit.json
 
-# Analyse generated / .gitignore'd code too
-scarno . --no-gitignore
+# Count generated / .gitignore'd code as ordinary usage
+scarno . --gitignore include
+
+# Leave a committed third-party tree out of the scan entirely
+scarno . --exclude "legacy/**" --exclude third_party
 ```
 
 ---
@@ -604,6 +610,31 @@ source files in every ecosystem, so the report reflects only what production
 needs. If your tests live somewhere Scarno's default matcher does not
 recognise, add globs with `--test-paths` (anchored to the project root; leading
 `/` is stripped).
+
+<a id="gitignored-files"></a>
+**Gitignored files (`--gitignore` / `--exclude`).** The commonest gitignored
+code that really uses a dependency is generated: protobuf `_pb2.py` and
+`*.pb.go` stubs, OpenAPI clients, Java `target/generated-sources`, C# `obj/`
+source generators and `GlobalUsings.g.cs`. So by default a dependency whose
+only use is in gitignored files is `UNCERTAIN` with a fixed reason ("used only
+in files excluded by .gitignore …"), not `SAFE`: removing it would break the
+next build. Usage in a tracked file always wins. `--gitignore include` counts
+gitignored files fully; `--gitignore exclude` ignores them. Build-output
+directories that are skipped by name (`dist/`, `build/`, `target/`, `bin/`,
+`obj/` …) never count as full usage; gitignored sources under Java's
+`target/`/`build/` and C#'s `bin/`/`obj/` can still make a dependency
+`UNCERTAIN`. Gitignored usage never adds an `UNDECLARED` entry, except under
+`include`.
+
+The security rules never honour `.gitignore`, or the by-name skip lists. A
+pull request can't hide a payload by listing it in its own `.gitignore`.
+Installed environments are recognised by structure (a `pyvenv.cfg`,
+`site-packages`, `dist-packages`, `__pypackages__`, `node_modules`) and are not
+scanned. Two warning lines, counts only, report how many findings came from
+gitignored files and how many installed environments the tree's own
+`.gitignore` does not cover. To silence a noisy committed tree, use `--exclude`
+on the command line. The analysed repository can't set `--gitignore` or
+`--exclude` for itself.
 
 **Populating package caches improves accuracy.** When several dependencies could
 own a class with the same simple name, Scarno uses package-cache metadata to

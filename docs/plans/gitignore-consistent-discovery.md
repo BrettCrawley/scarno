@@ -1,6 +1,6 @@
 # Plan: Consistent `.gitignore` handling across every analyser, and closing F23
 
-**Status:** Steps 1–8 done (2026-11-01); F23 closed. Every analyser is on shared discovery, and `--gitignore` / `--exclude` are visible in `--help`. Step 9 (docs) to do. Supersedes
+**Status:** Done (2026-11-01). All nine steps landed; F23 closed (`docs/THREAT-MODEL.md` §9.13). Every analyser is on shared discovery, and `--gitignore` / `--exclude` are documented. Supersedes
 workstream 4 of `roadmap-closeout.md`.
 
 ## Context
@@ -265,7 +265,7 @@ IDs are registered in `tests/srtm.py`:
    - No analyser uses the helper yet.
    **Done (2026-10-31).** Delivered as `src/scarno/core/discovery.py`,
    with `tests/unit/test_discovery.py` (40 tests: FR-278, FR-279,
-   SEC-NEW-76). The validator `sanitise_test_paths` gained a `flag=`
+   SEC-NEW-79). The validator `sanitise_test_paths` gained a `flag=`
    parameter so `--exclude` errors name `--exclude`. Decisions taken
    while building it:
    - **Three sets, not two.** `tracked`, `ignored` and `rule_only` (files
@@ -323,8 +323,8 @@ IDs are registered in `tests/srtm.py`:
    mode is honoured. F23 is reproduced and closed: before, the exploit
    exited 1 with no finding and the generated-code dep reported SAFE;
    after, it exits 3 with `TS-CE-001` and the dep is UNCERTAIN. Tests:
-   `tests/security/test_gitignore_not_a_detection_gate.py` (SEC-NEW-75,
-   PRV-008, SEC-NEW-76) and `tests/unit/test_gitignore_classification.py`
+   `tests/security/test_gitignore_not_a_detection_gate.py` (SEC-NEW-78,
+   PRV-008, SEC-NEW-79) and `tests/unit/test_gitignore_classification.py`
    (FR-278).
 
    **Back-compat check:** we diffed JSON output against the step 2
@@ -367,8 +367,8 @@ IDs are registered in `tests/srtm.py`:
    and `TS-CE-007` payloads.
    **Done (2026-10-31).** `html_scanner.scan_html_templates` and
    `CssAnalyser.analyse` run on `core.discovery`. Tests:
-   `tests/security/test_gitignore_html_css_rules.py` (SEC-NEW-75,
-   SEC-NEW-76, PRV-008) and
+   `tests/security/test_gitignore_html_css_rules.py` (SEC-NEW-78,
+   SEC-NEW-79, PRV-008) and
    `tests/unit/test_gitignore_html_css_classification.py` (FR-278,
    PRV-008).
 
@@ -534,6 +534,27 @@ IDs are registered in `tests/srtm.py`:
    - Add a CHANGELOG entry, **flagged as a behaviour change.**
    - Mark F23 resolved in the scan resolution table
      (`roadmap-closeout.md` workstream 7).
+
+   **Done (2026-11-01).**
+   - README: `--gitignore`, `--no-gitignore` and `--exclude` rows, a
+     "Gitignored files" section, and the pipeline description.
+   - `docs/LIMITATIONS.md`: structural environment detection and the
+     planted-marker residual, gitignored usage as weaker evidence,
+     detection ignoring the mode, `--exclude` not narrowing manifests,
+     `--exclude-tests` not skipping Java sources, and the notebook-cell
+     rule gap.
+   - `docs/THREAT-MODEL.md` §9.13: T-49..T-54 and the controls.
+   - CHANGELOG `[Unreleased]`, led by the behaviour change.
+   - The scan resolution table does not exist yet (workstream 7), and
+     the scan folder is gitignored. F23 is recorded in §9.13 and in
+     `roadmap-closeout.md` workstream 4; the workstream 7 bullet now
+     says the table goes in the threat model.
+
+   Decision: **SEC-NEW-75/76 renumbered to SEC-NEW-78/79.** REQ-24
+   (`docs/requirements/REQ-24.md`, THREAT-MODEL §9.12.7) defined
+   SEC-NEW-75..77 first, but never registered them in `tests/srtm.py`,
+   so step 2 reused the numbers. Code comments, test markers, the SRTM
+   and this plan now use 78/79; the REQ-24 IDs are unchanged.
 
 ## Step 1 results (2026-10-31)
 

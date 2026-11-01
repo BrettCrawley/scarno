@@ -28,7 +28,8 @@ working copy (full suite: 1759 passed; mypy clean, 54 files):
 2. **Unpushed commits.** `8f838b5` and `36aaf6f` close GitHub issues #2
    and #3, but they are not on `origin/main`, so both issues are still
    open.
-3. **Security finding F23 is not fixed.** The analysed repository's own
+3. **Security finding F23 is not fixed.** *Fixed 2026-11-01: see
+   workstream 4 and `docs/THREAT-MODEL.md` §9.13.* The analysed repository's own
    `.gitignore` is honoured by default during source discovery
    (`src/scarno/cli.py:112`, `base_analyser.py:26`). A payload in a
    gitignored file is never seen by the rule engine, and the run exits 0.
@@ -116,6 +117,11 @@ type is now reported as `TS-ABI-*` drift/risk.
 > plan also changes the default: usage found only in gitignored files
 > becomes UNCERTAIN, rather than being excluded. The text below is
 > kept as the original proposal.
+>
+> **Done (2026-11-01).** Closed for Python in `5b28fae` and for the
+> HTML/CSS rule scans in `579fd09`; every analyser on shared discovery
+> by `73138e2`. Resolution recorded in `docs/THREAT-MODEL.md` §9.13
+> (T-49..T-54, SEC-NEW-78/79).
 
 **Problem.** `.gitignore` is attacker-authored in the PR scenario.
 Honouring it is right for *dependency classification*: ignored build
@@ -279,9 +285,10 @@ CHANGELOG line.
 - Delete `docs/SCARNO-BUG-signature-diff.md`. The copy in
   `docs/issues/` remains. Mark both `docs/issues/` reports as fixed,
   with commit refs.
-- Add a resolution table to `CLAUDE-SECURITY-20260802-085339/` or
-  `docs/THREAT-MODEL.md`, mapping each F-id to its commit and F23 to
-  workstream 4.
+- Add a resolution table to `docs/THREAT-MODEL.md` (the
+  `CLAUDE-SECURITY-20260802-085339/` folder is gitignored), mapping each
+  F-id to its commit. F23 is already recorded in §9.13; the table should
+  point there.
 
 ### 8. Re-scan
 

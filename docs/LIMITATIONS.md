@@ -41,7 +41,36 @@ For the full design rationale, see
 
 - **Test-source code is skipped wholesale** under `--exclude-tests`
   — no per-file fine-grained scoping. Use `--test-paths` to extend
-  the heuristic for non-standard layouts.
+  the heuristic for non-standard layouts. Java/Kotlin source files are
+  not skipped: `--exclude-tests` drops test-scoped Maven/Gradle
+  declarations only.
+
+- **Installed environments are recognised by structure, not by
+  name.** A directory holding `pyvenv.cfg`, and any `site-packages`,
+  `dist-packages`, `__pypackages__` or `node_modules` directory, is
+  neither classified nor rule-scanned. The residual: a pull request
+  can plant a `pyvenv.cfg` to hide its directory from the security
+  rules. It is visible in review, and an environment the tree's own
+  `.gitignore` does not cover is counted in the "installed-environment
+  tree(s) … not covered by .gitignore" warning line.
+
+- **Gitignored usage is weaker evidence, by design.** Under the
+  default `--gitignore uncertain`, usage found only in gitignored
+  files can lift a dependency from `SAFE` to `UNCERTAIN`, never to
+  `IN_USE`, and never adds an `UNDECLARED` entry. In JS/TS a
+  non-literal `require(x)` in a gitignored file is not counted at
+  all, because a gitignored bundle would otherwise make every
+  dependency `UNCERTAIN`. Build-output directories skipped by name
+  (`dist/`, `build/`, `target/`, `bin/`, `obj/` …) never count as full
+  usage in any mode.
+
+- **Project-type detection ignores `--gitignore` and `--exclude`.** A
+  gitignored or excluded `go.mod` still makes the tree a Go project.
+
+- **`--exclude` narrows source scans only.** Files that declare
+  dependencies (requirements files, `pom.xml`, `build.gradle`,
+  `package.json`, `.csproj`, Dockerfile `pip install` lines) are
+  still read, so an excluded subproject's declarations still appear.
 
 ---
 
@@ -87,6 +116,10 @@ For the full design rationale, see
 - **Multi-target assignment** (`a, b = SomeClass(), Other()`) is
   deliberately not bound to a type — risk of wrong attribution.
 - **Walrus expressions** (`if (x := SomeClass()):`) don't bind.
+- **Notebook code cells are not rule-scanned.** Imports in `.ipynb`
+  cells count for classification, but the security rules see only
+  `!pip install` / `%pip install` magics, not the Python in the
+  cells.
 - **Generic peeling depth = 1**: `list[Foo]` works; nested
   `list[Optional[Foo]]` does not.
 - **Entry-point enumeration requires the package to be installed**

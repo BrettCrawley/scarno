@@ -4,6 +4,58 @@ All notable changes to **scarno** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Behaviour change: every ecosystem now treats gitignored code as Python
+  does since 1.1.0.** Java/Kotlin, JavaScript/TypeScript, Go, C#, CSS and
+  HTML-template discovery never read `.gitignore`, so usage in a gitignored
+  file counted like any other. A dependency whose only use is in gitignored
+  files (generated clients, `*.pb.go` stubs, `target/generated-sources`,
+  C# source generators) is now **UNCERTAIN** with the reason "used only in
+  files excluded by .gitignore", instead of IN_USE. Tracked usage always wins.
+  Expect some IN_USE dependencies to move to UNCERTAIN on upgrade. Exit 1
+  (SAFE present) can only become less frequent.
+- **New `--gitignore uncertain|include|exclude` option** (default `uncertain`)
+  selects that behaviour. `include` restores the old IN_USE results for the
+  non-Python ecosystems. `--no-gitignore` is the same as `include` and now
+  works in every ecosystem, not only Python.
+- **Generated sources under build-output directories count as weak evidence.**
+  Gitignored Java/Kotlin files under `target/` or `build/`, and C# files under
+  `bin/` or `obj/` (including the SDK's `GlobalUsings.g.cs`), can make a
+  dependency UNCERTAIN, never IN_USE. These directories were skipped outright,
+  so a dependency used only by generated code was SAFE. `--gitignore exclude`
+  restores that.
+- **Installed environments are skipped in every ecosystem.** JavaScript, Go
+  and C# files, templates and stylesheets inside a virtualenv,
+  `site-packages` or `node_modules` no longer count as the project's code.
+  Third-party templates inside virtualenvs no longer produce `TS-CE-012`
+  findings.
+- **The two warning lines are reported once per run.** The line counting
+  findings from gitignored files sums across analysers. The line counting
+  installed environments the tree's `.gitignore` does not cover counts each
+  environment once.
+
+### Added
+- **`--exclude <glob>`** (repeatable, argv only) removes a path from every
+  source scan, security rules included, so you can silence a noisy committed
+  tree. Files that declare dependencies are still read. Validated like
+  `--test-paths`.
+
+### Security
+- **The security rules never honour `.gitignore` or by-name skip lists.**
+  The HTML template and CSS scans skipped `dist/`, `build/`, `vendor/`,
+  `bin/` and `obj/` by name, so a pull request could hide a remote
+  `<script src>` or `@import` there. Those directories are now rule-scanned.
+  This completes the F23 fix that 1.1.0 made for Python
+  (`docs/THREAT-MODEL.md` §9.13).
+
+### Fixed
+- **C#: `global::`-qualified `using` directives were misread.**
+  `global using global::Serilog;`, the form the SDK writes into
+  `GlobalUsings.g.cs`, was ignored, and `using global::Serilog.Core;` was read
+  as `Core`. A package used only that way was reported SAFE.
+
 ## [1.1.0] — 2026-10-31
 
 ### Added
@@ -268,6 +320,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Path-confined, sandboxed file access; adversarial security test suite.
 - Optional OS-trust-store TLS via `--native-tls`.
 
+[Unreleased]: https://github.com/BrettCrawley/scarno/compare/v1.1.0...HEAD
 [1.1.0]: https://github.com/BrettCrawley/scarno/compare/v1.0.4...v1.1.0
 [1.0.4]: https://github.com/BrettCrawley/scarno/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/BrettCrawley/scarno/compare/v1.0.2...v1.0.3
