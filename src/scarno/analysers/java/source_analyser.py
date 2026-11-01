@@ -76,9 +76,15 @@ from scarno.analysers.java.maven import (
 )
 from scarno.analysers.name_counts import MAX_FULL_SCANS, count_boundary_refs
 from scarno.core.base_analyser import BaseAnalyser
+from scarno.core.discovery import (
+    GITIGNORED_ONLY_REASON,
+    GitignoreMode,
+    discover,
+    load_gitignore_matcher,
+    unignored_environments_line,
+)
 from scarno.models import AnalysisResult, Dependency, DependencyStatus, EntryPoint
 from scarno.security import (
-    MAX_FILE_BYTES,
     PathEscapeError,
     resolve_and_confine,
     safe_jar_entries,
@@ -343,7 +349,7 @@ class JvmSourceAnalyser(BaseAnalyser):
                 findings=[],
             )
 
-        source_items = self._gather_source_files(root, errors)
+        source_items, ignored_items = self._gather_source_files(root, errors)
         import_paths: set[str] = set()
         annotations: set[str] = set()
         reflective_literals: set[str] = set()
@@ -393,6 +399,17 @@ class JvmSourceAnalyser(BaseAnalyser):
         import_paths |= wildcard_imports
 
         have_source_evidence = bool(source_items)
+
+        # FR-278 — usage signals from gitignored files, kept apart so they
+        # can only lift a SAFE verdict to UNCERTAIN.
+        ignored_signals: tuple[set[str], set[str], set[str]] | None = None
+        if ignored_items:
+            ignored_signals = (set(), set(), set())
+            for text, language in ignored_items:
+                facts = self._extract_facts(text, language, errors)
+                ignored_signals[0].update(facts.imports, facts.wildcard_imports)
+                ignored_signals[1].update(facts.annotations)
+                ignored_signals[2].update(facts.reflective_literals)
 
         # FR-134 — inspect each dependency JAR once to discover its real
         # Java packages (classification) and cache its class entries
@@ -471,6 +488,25 @@ class JvmSourceAnalyser(BaseAnalyser):
                 have_source_evidence=have_source_evidence,
                 jar_packages=jar_packages,
             )
+            # FR-278 — a dep still SAFE that gitignored (generated) code
+            # uses is UNCERTAIN, not SAFE. Any signal counts: an import,
+            # a DI annotation or a reflective literal. The reason is a
+            # fixed literal and names no file (PRV-008).
+            if (
+                new_status is DependencyStatus.SAFE
+                and ignored_signals is not None
+                and _classify_dep(
+                    dep,
+                    import_paths=ignored_signals[0],
+                    annotations=ignored_signals[1],
+                    reflective_literals=ignored_signals[2],
+                    have_source_evidence=True,
+                    jar_packages=jar_packages,
+                )[0] is not DependencyStatus.SAFE
+            ):
+                new_status, reason = (
+                    DependencyStatus.UNCERTAIN, GITIGNORED_ONLY_REASON,
+                )
             entry_points = self._enumerate_jar_entry_points(
                 dep, jar_inventory, import_paths,
                 import_counts=import_counts,
@@ -554,44 +590,69 @@ class JvmSourceAnalyser(BaseAnalyser):
 
     def _gather_source_files(
         self, root: Path, errors: list[str]
+    ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+        """Return ``(classify, ignored_only)``, each a list of
+        ``(text, language)`` pairs where language is ``"java"`` or
+        ``"kotlin"``.
+
+        ``classify`` holds the files whose usage counts with full weight
+        under the analyser's :class:`GitignoreMode`. ``ignored_only`` holds
+        gitignored files whose usage can only make a dep UNCERTAIN (FR-278).
+        It is empty under ``EXCLUDE``.
+
+        Directories excluded by name (``target``, ``build`` …) never count
+        with full weight, as before. A gitignored source file under one is
+        generated code (``target/generated-sources``,
+        ``build/generated``), so outside ``EXCLUDE`` it is ignored-only
+        evidence: a dep only generated code uses is not safe to remove.
+        """
+        matcher = load_gitignore_matcher(errors, "jvm_source_analyser")
+        found = discover(
+            root,
+            (".java", ".kt"),
+            errors,
+            label="jvm_source_analyser",
+            classification_excluded_dirs=_EXCLUDED_DIR_NAMES,
+            operator_excludes=self.operator_excludes,
+            gitignore_matcher=matcher,
+            use_gitignore=matcher is not None,
+        )
+        if found.environment_dirs_unignored:
+            # PRV-008 — the CLI keeps one such line per run.
+            errors.append(
+                unignored_environments_line(found.environment_dirs_unignored)
+            )
+        mode = self.gitignore
+        classify_paths = found.for_classification(mode)
+        ignored_paths: list[Path] = []
+        if mode is not GitignoreMode.EXCLUDE:
+            if mode is GitignoreMode.UNCERTAIN:
+                ignored_paths.extend(found.ignored)
+            if matcher is not None:
+                ignored_paths.extend(
+                    p for p in found.rule_only if matcher(str(p))
+                )
+        return (
+            self._read_sources(classify_paths, errors),
+            self._read_sources(sorted(ignored_paths), errors),
+        )
+
+    @staticmethod
+    def _read_sources(
+        paths: list[Path], errors: list[str]
     ) -> list[tuple[str, str]]:
-        """Return a list of ``(text, language)`` pairs where language is
-        ``"java"`` or ``"kotlin"``. Skips excluded dirs, oversized files,
-        and confined-path escapes."""
         out: list[tuple[str, str]] = []
-        for pattern, language in (("*.java", "java"), ("*.kt", "kotlin")):
-            for raw_path in root.rglob(pattern):
-                rel_parts = raw_path.relative_to(root).parts
-                if any(p in _EXCLUDED_DIR_NAMES for p in rel_parts):
-                    continue
-                try:
-                    resolved = resolve_and_confine(raw_path, root)
-                except PathEscapeError:
-                    errors.append(
-                        f"jvm_source_analyser: symlink escape blocked: "
-                        f"{'/'.join(rel_parts)}"
-                    )
-                    continue
-                try:
-                    size = resolved.stat().st_size
-                except OSError as exc:
-                    errors.append(
-                        f"jvm_source_analyser: stat failed for {resolved.name} — {exc}"
-                    )
-                    continue
-                if size > MAX_FILE_BYTES:
-                    errors.append(
-                        f"jvm_source_analyser: skipped {resolved.name} — too large"
-                    )
-                    continue
-                try:
-                    text = resolved.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError) as exc:
-                    errors.append(
-                        f"jvm_source_analyser: could not read {resolved.name} — {exc}"
-                    )
-                    continue
-                out.append((text, language))
+        for path in paths:
+            language = "kotlin" if path.suffix.lower() == ".kt" else "java"
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                errors.append(
+                    f"jvm_source_analyser: could not read {path.name} — "
+                    f"{sanitise(str(exc))}"
+                )
+                continue
+            out.append((text, language))
         return out
 
     def _extract_facts(

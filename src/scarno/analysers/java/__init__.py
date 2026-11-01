@@ -119,7 +119,8 @@ class JavaAnalyser(BaseAnalyser):
             mvn.exclude_tests = self.exclude_tests
             mvn.test_paths = self.test_paths
             mvn.exclude_dev = self.exclude_dev
-            mvn.use_gitignore = self.use_gitignore
+            mvn.gitignore = self.gitignore
+            mvn.operator_excludes = self.operator_excludes
             # REQ-24 / Option 2 — pass the REQ-24 fetcher (if any) so
             # POMs missing from ~/.m2 can be fetched mid-walk via the
             # configured indexes (cache-first, audit-logged).
@@ -142,7 +143,8 @@ class JavaAnalyser(BaseAnalyser):
             gradle.exclude_tests = self.exclude_tests
             gradle.test_paths = self.test_paths
             gradle.exclude_dev = self.exclude_dev
-            gradle.use_gitignore = self.use_gitignore
+            gradle.gitignore = self.gitignore
+            gradle.operator_excludes = self.operator_excludes
             gradle_result = gradle.analyse(str(root))
             dependencies.extend(gradle_result.dependencies)
             errors.extend(gradle_result.errors)
@@ -168,7 +170,8 @@ class JavaAnalyser(BaseAnalyser):
         src = JvmSourceAnalyser(deep_inspection=self.deep_inspection)
         src.exclude_tests = self.exclude_tests
         src.test_paths = self.test_paths
-        src.use_gitignore = self.use_gitignore
+        src.gitignore = self.gitignore
+        src.operator_excludes = self.operator_excludes
         source_result = src.analyse(str(root), dependencies)
         errors.extend(source_result.errors)
 

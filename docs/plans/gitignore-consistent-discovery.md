@@ -1,6 +1,6 @@
 # Plan: Consistent `.gitignore` handling across every analyser, and closing F23
 
-**Status:** Steps 1–4 done (2026-10-31); F23 closed. Python, HTML and CSS are on shared discovery. Steps 5–9 to do. Supersedes
+**Status:** Steps 1–5 done (2026-11-01); F23 closed. Python, HTML, CSS and Java/Kotlin are on shared discovery. Steps 6–9 to do. Supersedes
 workstream 4 of `roadmap-closeout.md`.
 
 ## Context
@@ -423,6 +423,36 @@ IDs are registered in `tests/srtm.py`:
 5. **Java/Kotlin.** Wire the flag the analyser already forwards into
    `_gather_source_files`. Test: gitignored
    `target/generated-sources/...` as the only user gives UNCERTAIN.
+
+   **Done (2026-11-01).** `_gather_source_files` uses `discover()` and
+   returns two lists: files that count with full weight, and gitignored
+   files that can only lift a SAFE dep to UNCERTAIN. Any signal counts
+   (an import, a DI annotation or a reflective literal). Tests in
+   `tests/unit/test_gitignore_java_classification.py`.
+
+   Back-compat against `579fd09`: every Maven/Gradle fixture
+   (`java_simple` in all three modes), the six step 1 samples and
+   scarno's own tree are identical. The samples have no Java, so the
+   real-world effect is untested beyond the fixtures.
+
+   Decisions:
+   - **Gitignored sources under the by-name directories (`target`,
+     `build` …) are ignored-only evidence outside `exclude`.** The
+     by-name list alone would have kept `target/generated-sources`
+     SAFE, the exact false SAFE this plan exists to stop. They never
+     count with full weight, so `include` also gives UNCERTAIN there:
+     stale build output must not keep a dep IN_USE. A committed
+     (not gitignored) `target/` still does not count, because the fixed
+     reason names `.gitignore` and would be untrue.
+   - **`JavaAnalyser` forwards `gitignore` and `operator_excludes`, not
+     `use_gitignore`.** The bool cannot carry three modes: a fresh
+     sub-analyser would have turned `exclude` into the default.
+   - **The Java walk reports unignored environments** like the others;
+     the CLI keeps one line per run.
+   - **`--exclude-tests` is still not applied to Java sources.** It
+     never was (the flag is forwarded and dropped), and wiring
+     `test_matcher` would change classification for existing users.
+     Left as a separate item.
 6. **JS/TS.** `_scan_tree`. Test: a gitignored generated client as the
    only importer.
 7. **Go.** `_scan_tree`. Keep `vendor/` and `testdata/` excluded from
